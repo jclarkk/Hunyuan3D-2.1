@@ -337,6 +337,9 @@ def generation_all(
     check_box_rembg=False,
     num_chunks=200000,
     randomize_seed: bool = False,
+    texture_size: int = 4096,
+    pbr: bool = False,
+    super_resolution: str = 'NMKD',
 ):
     start_time_0 = time.time()
     mesh, image, save_folder, stats, seed = _gen_shape(
@@ -378,7 +381,15 @@ def generation_all(
     tmp_time = time.time()
 
     text_path = os.path.join(save_folder, f'textured_mesh.obj')
-    path_textured = tex_pipeline(mesh_path=path, image_path=image, output_mesh_path=text_path, save_glb=False)
+    path_textured = tex_pipeline(
+        mesh_path=path,
+        image_path=image,
+        output_mesh_path=text_path,
+        save_glb=False,
+        texture_size=texture_size,
+        pbr=pbr,
+        upscale_model=super_resolution
+    )
         
     logger.info("---Texture Generation takes %s seconds ---" % (time.time() - tmp_time))
     stats['time']['texture generation'] = time.time() - tmp_time
@@ -567,6 +578,15 @@ Fast for very complex cases, Standard seldom use.',
                             cfg_scale = gr.Number(value=5.0, label='Guidance Scale', min_width=100)
                             num_chunks = gr.Slider(maximum=5000000, minimum=1000, value=8000,
                                                    label='Number of Chunks', min_width=100)
+                        with gr.Row():
+                            texture_size = gr.Slider(minimum=1024, maximum=8192, step=1024, value=4096,
+                                                     label='Texture Resolution')
+                            pbr = gr.Checkbox(label='PBR Texture (Experimental, use the README in folder)', value=False)
+                            super_resolution = gr.Radio(
+                                ['None', 'Aura', 'NMKD', 'Flux', 'Topaz'],
+                                label='Super-Resolution (Install the method required, use README in folder)',
+                                value='NMKD')
+
                     with gr.Tab("Export", id='tab_export'):
                         with gr.Row():
                             file_type = gr.Dropdown(label='File Type', 
@@ -648,6 +668,9 @@ Fast for very complex cases, Standard seldom use.',
                 check_box_rembg,
                 num_chunks,
                 randomize_seed,
+                texture_size,
+                pbr,
+                super_resolution,
             ],
             outputs=[file_out, file_out2, html_gen_mesh, stats, seed]
         ).then(
@@ -798,9 +821,9 @@ if __name__ == '__main__':
 
             from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
             conf = Hunyuan3DPaintConfig(max_num_view=8, resolution=768)
-            conf.realesrgan_ckpt_path = "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"
             conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
             conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
+            conf.multiview_pretrained_path = args.texgen_model_path
             tex_pipeline = Hunyuan3DPaintPipeline(conf)
         
             # Not help much, ignore for now.

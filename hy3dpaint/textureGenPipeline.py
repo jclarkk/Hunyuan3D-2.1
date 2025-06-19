@@ -20,12 +20,13 @@ import numpy as np
 from PIL import Image
 from typing import List
 from DifferentiableRenderer.MeshRender import MeshRender
+from hy3dpaint.mvadapter.pipeline import MVAdapterPipelineWrapper
+from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_i2mv_sdxl import MVAdapterI2MVSDXLPipeline
+from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_t2mv_sdxl import MVAdapterT2MVSDXLPipeline
 from utils.simplify_mesh_utils import remesh_mesh
 from utils.multiview_utils import multiviewDiffusionNet
 from utils.pipeline_utils import ViewProcessor
-from utils.image_super_utils import imageSuperNet
 from utils.uvwrap_utils import mesh_uv_wrap
-from DifferentiableRenderer.mesh_utils import convert_obj_to_glb
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -35,14 +36,14 @@ diffusers_logging.set_verbosity(50)
 
 
 class Hunyuan3DPaintConfig:
-    def __init__(self, max_num_view, resolution):
+    def __init__(self, max_num_view, resolution, local_files_only=False) -> None:
         self.device = "cuda"
+        self.local_files_only = local_files_only
 
         self.multiview_cfg_path = "cfgs/hunyuan-paint-pbr.yaml"
         self.custom_pipeline = "hunyuanpaintpbr"
         self.multiview_pretrained_path = "tencent/Hunyuan3D-2.1"
         self.dino_ckpt_path = "facebook/dinov2-giant"
-        self.realesrgan_ckpt_path = "ckpt/RealESRGAN_x4plus.pth"
 
         self.raster_mode = "cr"
         self.bake_mode = "back_sample"
@@ -85,22 +86,38 @@ class Hunyuan3DPaintPipeline:
 
     def load_models(self):
         torch.cuda.empty_cache()
-        self.models["super_model"] = imageSuperNet(self.config)
-        self.models["multiview_model"] = multiviewDiffusionNet(self.config)
+        if self.config.multiview_pretrained_path == "tencent/Hunyuan3D-2.1":
+            print("Loading Hunyuan3D-2.1 Multiview Diffusion Model...")
+            self.models["multiview_model"] = multiviewDiffusionNet(self.config)
+        elif self.config.multiview_pretrained_path == "mv-adapter":
+            self.models["multiview_model"] = MVAdapterPipelineWrapper.from_pretrained(device=self.config.device,
+                                                                                      local_files_only=self.config.local_files_only,
+                                                                                      model_cls=MVAdapterI2MVSDXLPipeline)
+        elif self.config.multiview_pretrained_path == "mv-adapter-t2mv":
+            self.models["multiview_model"] = MVAdapterPipelineWrapper.from_pretrained(device=self.config.device,
+                                                                                      local_files_only=self.config.local_files_only,
+                                                                                      model_cls=MVAdapterT2MVSDXLPipeline)
+
         print("Models Loaded.")
 
     @torch.no_grad()
-    def __call__(self, mesh_path=None, image_path=None, output_mesh_path=None, use_remesh=True, save_glb=True):
+    def __call__(self, mesh_path=None, image_path=None, prompt=None, output_mesh_path=None, use_remesh=True, save_glb=True,
+                 upscale_model='NMKD', pbr=True, texture_size=4096, seed=42):
+        self.config.texture_size = texture_size
+        self.render.set_default_texture_resolution(texture_size)
+
         """Generate texture for 3D mesh using multiview diffusion"""
-        # Ensure image_prompt is a list
-        if isinstance(image_path, str):
-            image_prompt = Image.open(image_path)
-        elif isinstance(image_path, Image.Image):
-            image_prompt = image_path
-        if not isinstance(image_prompt, List):
-            image_prompt = [image_prompt]
-        else:
-            image_prompt = image_path
+        image_prompt = None
+        if image_path is not None:
+            # Ensure image_prompt is a list
+            if isinstance(image_path, str):
+                image_prompt = Image.open(image_path)
+            elif isinstance(image_path, Image.Image):
+                image_prompt = image_path
+            if not isinstance(image_prompt, List):
+                image_prompt = [image_prompt]
+            else:
+                image_prompt = image_path
 
         # Process mesh
         path = os.path.dirname(mesh_path)
@@ -132,49 +149,101 @@ class Hunyuan3DPaintPipeline:
         )
         position_maps = self.view_processor.render_position_multiview(selected_camera_elevs, selected_camera_azims)
 
-        ##########  Style  ###########
-        image_caption = "high quality"
-        image_style = []
-        for image in image_prompt:
-            image = image.resize((512, 512))
-            if image.mode == "RGBA":
-                white_bg = Image.new("RGB", image.size, (255, 255, 255))
-                white_bg.paste(image, mask=image.getchannel("A"))
-                image = white_bg
-            image_style.append(image)
-        image_style = [image.convert("RGB") for image in image_style]
+        if self.config.multiview_pretrained_path == "tencent/Hunyuan3D-2.1":
+            if image_prompt is None:
+                raise ValueError("Image prompt is required for Hunyuan3D-2.1 model.")
 
-        ###########  Multiview  ##########
-        multiviews_pbr = self.models["multiview_model"](
-            image_style,
-            normal_maps + position_maps,
-            prompt=image_caption,
-            custom_view_size=self.config.resolution,
-            resize_input=True,
-        )
+            ##########  Style  ###########
+            image_caption = "high quality"
+            image_style = []
+            for image in image_prompt:
+                image = image.resize((512, 512))
+                if image.mode == "RGBA":
+                    white_bg = Image.new("RGB", image.size, (255, 255, 255))
+                    white_bg.paste(image, mask=image.getchannel("A"))
+                    image = white_bg
+                image_style.append(image)
+            image_style = [image.convert("RGB") for image in image_style]
+
+            ###########  Multiview  ##########
+            multiviews = self.models["multiview_model"](
+                image_style,
+                normal_maps + position_maps,
+                prompt=image_caption,
+                custom_view_size=self.config.resolution,
+                resize_input=True,
+            )
+        elif self.config.multiview_pretrained_path == "mv-adapter":
+            ############  Multiview  ##########
+            multiviews = self.models['multiview_model'](mesh,
+                                                        image_prompt[0],
+                                                        normal_maps=normal_maps,
+                                                        position_maps=position_maps,
+                                                        camera_elevation_deg=selected_camera_elevs,
+                                                        camera_azimuth_deg=selected_camera_azims,
+                                                        num_views=len(selected_camera_azims),
+                                                        seed=seed,
+                                                        use_mesh_renderer=False)
+        elif self.config.multiview_pretrained_path == "mv-adapter-t2mv":
+            ############  Multiview  ##########
+            multiviews = self.models['multiview_model'](mesh,
+                                                        normal_maps=normal_maps,
+                                                        position_maps=position_maps,
+                                                        prompt=prompt,
+                                                        camera_elevation_deg=selected_camera_elevs,
+                                                        camera_azimuth_deg=selected_camera_azims,
+                                                        num_views=len(selected_camera_azims),
+                                                        seed=seed,
+                                                        use_mesh_renderer=False)
+        else:
+            raise ValueError("Unsupported multiview model path: {}".format(self.config.multiview_pretrained_path))
+
         ###########  Enhance  ##########
         enhance_images = {}
-        enhance_images["albedo"] = copy.deepcopy(multiviews_pbr["albedo"])
-        enhance_images["mr"] = copy.deepcopy(multiviews_pbr["mr"])
+        enhance_images["albedo"] = copy.deepcopy(multiviews["albedo"])
+        if pbr:
+            enhance_images["mr"] = copy.deepcopy(multiviews["mr"])
 
-        for i in range(len(enhance_images["albedo"])):
-            enhance_images["albedo"][i] = self.models["super_model"](enhance_images["albedo"][i])
-            enhance_images["mr"][i] = self.models["super_model"](enhance_images["mr"][i])
+        if upscale_model == 'Aura':
+            from .upscalers.pipelines import AuraSRUpscalerPipeline
+            upscaler = AuraSRUpscalerPipeline.from_pretrained()
+        elif upscale_model == 'NMKD':
+            from .upscalers.pipelines import NMKDSiaxUpscalerPipeline
+            upscaler = NMKDSiaxUpscalerPipeline.from_pretrained(self.config.device)
+        elif upscale_model == 'Flux':
+            from .upscalers.pipelines import FluxUpscalerPipeline
+            upscaler = FluxUpscalerPipeline.from_pretrained(self.config.device)
+        elif upscale_model == 'Topaz':
+            from .upscalers.pipelines import TopazAPIUpscalerPipeline
+            upscaler = TopazAPIUpscalerPipeline()
+        else:
+            upscaler = None
+
+        if upscaler is not None:
+            for i in range(len(enhance_images["albedo"])):
+                enhance_images["albedo"][i] = upscaler(enhance_images["albedo"][i])
+                if pbr:
+                    enhance_images["mr"][i] = upscaler(enhance_images["mr"][i])
+
+            del upscaler
 
         ###########  Bake  ##########
+        texture_mr, mask_mr_np = None, None
         for i in range(len(enhance_images)):
             enhance_images["albedo"][i] = enhance_images["albedo"][i].resize(
                 (self.config.render_size, self.config.render_size)
             )
-            enhance_images["mr"][i] = enhance_images["mr"][i].resize((self.config.render_size, self.config.render_size))
+            if pbr:
+                enhance_images["mr"][i] = enhance_images["mr"][i].resize((self.config.render_size, self.config.render_size))
         texture, mask = self.view_processor.bake_from_multiview(
             enhance_images["albedo"], selected_camera_elevs, selected_camera_azims, selected_view_weights
         )
         mask_np = (mask.squeeze(-1).cpu().numpy() * 255).astype(np.uint8)
-        texture_mr, mask_mr = self.view_processor.bake_from_multiview(
-            enhance_images["mr"], selected_camera_elevs, selected_camera_azims, selected_view_weights
-        )
-        mask_mr_np = (mask_mr.squeeze(-1).cpu().numpy() * 255).astype(np.uint8)
+        if pbr:
+            texture_mr, mask_mr = self.view_processor.bake_from_multiview(
+                enhance_images["mr"], selected_camera_elevs, selected_camera_azims, selected_view_weights
+            )
+            mask_mr_np = (mask_mr.squeeze(-1).cpu().numpy() * 255).astype(np.uint8)
 
         ##########  inpaint  ###########
         texture = self.view_processor.texture_inpaint(texture, mask_np)
@@ -183,10 +252,6 @@ class Hunyuan3DPaintPipeline:
             texture_mr = self.view_processor.texture_inpaint(texture_mr, mask_mr_np)
             self.render.set_texture_mr(texture_mr)
 
-        self.render.save_mesh(output_mesh_path, downsample=True)
-
-        if save_glb:
-            convert_obj_to_glb(output_mesh_path, output_mesh_path.replace(".obj", ".glb"))
-            output_glb_path = output_mesh_path.replace(".obj", ".glb")
+        self.render.save_glb_mesh(output_mesh_path, downsample=True)
 
         return output_mesh_path
