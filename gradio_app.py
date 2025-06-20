@@ -390,14 +390,16 @@ def generation_all(
         pbr=pbr,
         upscale_model=super_resolution
     )
+    glb_path_textured = os.path.join(save_folder, 'textured_mesh.glb')
+    shutil.copy(path_textured, glb_path_textured)
         
     logger.info("---Texture Generation takes %s seconds ---" % (time.time() - tmp_time))
     stats['time']['texture generation'] = time.time() - tmp_time
 
     tmp_time = time.time()
     # Convert textured OBJ to GLB using obj2gltf with PBR support
-    glb_path_textured = os.path.join(save_folder, 'textured_mesh.glb')
-    conversion_success = quick_convert_with_obj2gltf(path_textured, glb_path_textured)
+    # glb_path_textured = os.path.join(save_folder, 'textured_mesh.glb')
+    # conversion_success = quick_convert_with_obj2gltf(path_textured, glb_path_textured)
 
     logger.info("---Convert textured OBJ to GLB takes %s seconds ---" % (time.time() - tmp_time))
     stats['time']['convert textured OBJ to GLB'] = time.time() - tmp_time
@@ -581,7 +583,7 @@ Fast for very complex cases, Standard seldom use.',
                         with gr.Row():
                             texture_size = gr.Slider(minimum=1024, maximum=8192, step=1024, value=4096,
                                                      label='Texture Resolution')
-                            pbr = gr.Checkbox(label='PBR Texture (Experimental, use the README in folder)', value=False)
+                            pbr = gr.Checkbox(label='PBR Texture', value=False)
                             super_resolution = gr.Radio(
                                 ['None', 'Aura', 'NMKD', 'Flux', 'Topaz'],
                                 label='Super-Resolution (Install the method required, use README in folder)',
@@ -771,7 +773,7 @@ if __name__ == '__main__':
     parser.add_argument('--compile', action='store_true')
     parser.add_argument('--low_vram_mode', action='store_true')
     args = parser.parse_args()
-    args.enable_flashvdm = False
+    # args.enable_flashvdm = False
 
     SAVE_DIR = args.cache_path
     os.makedirs(SAVE_DIR, exist_ok=True)

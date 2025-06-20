@@ -19,6 +19,7 @@ import math
 import numpy as np
 import trimesh
 from io import StringIO
+from trimesh.exchange.gltf import export_glb
 from typing import Optional, Tuple, Dict, Any
 
 from PIL import Image
@@ -204,53 +205,69 @@ def save_glb_trimesh(
         roughness=None,
         normal=None
 ):
-    """
-    Save mesh as a GLB file using trimesh. Supports PBR textures if provided.
-    """
-    # Convert data to numpy
+    import trimesh
+    import numpy as np
+    from PIL import Image
+    import cv2
+    from trimesh.exchange.gltf import export_glb
+
     vtx_pos = _convert_to_numpy(vtx_pos, np.float32)
     pos_idx = _convert_to_numpy(pos_idx, np.int32)
     vtx_uv = _convert_to_numpy(vtx_uv, np.float32)
 
-    # Create base mesh
     mesh = trimesh.Trimesh(vertices=vtx_pos, faces=pos_idx, process=False)
-    mesh.visual.uv = vtx_uv
 
-    # Save texture images as bytes for embedding
-    def encode_image(img_arr, convert_to_gray=False):
-        img = (img_arr * 255).astype(np.uint8)
-        if convert_to_gray:
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        pil_img = Image.fromarray(img)
-        with io.BytesIO() as buffer:
-            pil_img.save(buffer, format='PNG')
-            return buffer.getvalue()
+    # Ensure UVs are valid
+    if vtx_uv is None or len(vtx_uv) != len(vtx_pos):
+        vtx_uv = np.zeros((len(vtx_pos), 2), dtype=np.float32)
 
-    # Base color texture is required
-    material_kwargs = {
-        "baseColorTexture": encode_image(texture)
-    }
+    def to_pil_image(img):
+        img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+        if img.ndim == 2 or img.shape[2] == 1:
+            img = np.repeat(img[:, :, np.newaxis], 3, axis=2)
+        return Image.fromarray(img)
 
-    # Optional PBR maps
-    if metallic is not None:
-        material_kwargs["metallicRoughnessTexture"] = encode_image(
-            np.stack([metallic, roughness, np.zeros_like(metallic)], axis=-1)
+    def ensure_grayscale(img):
+        if img.ndim == 3 and img.shape[2] == 3:
+            img = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+            img = img.astype(np.float32) / 255.0
+        return img
+
+    base_image = to_pil_image(texture)
+
+    if normal is not None or (metallic is not None and roughness is not None):
+        # PBR material setup
+        normal_image = to_pil_image(normal) if normal is not None else None
+        if metallic is not None and roughness is not None:
+            metal_gray = ensure_grayscale(metallic)
+            rough_gray = ensure_grayscale(roughness)
+            zero_channel = np.zeros_like(metal_gray)
+            pbr_combined = np.stack([zero_channel, rough_gray, metal_gray], axis=-1)
+            metal_rough_image = to_pil_image(pbr_combined)
+        else:
+            metal_rough_image = None
+
+        material = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=base_image,
+            normalTexture=normal_image,
+            metallicRoughnessTexture=metal_rough_image,
+            baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+            metallicFactor=1.0 if metallic is not None else 0.0,
+            roughnessFactor=1.0
         )
-        material_kwargs["metallicFactor"] = 1.0
-        material_kwargs["roughnessFactor"] = 1.0
     else:
-        material_kwargs["metallicFactor"] = 0.0
-        material_kwargs["roughnessFactor"] = 1.0
+        # Simple material fallback
+        material = trimesh.visual.texture.SimpleMaterial(
+            image=base_image,
+            diffuse=(255, 255, 255)
+        )
 
-    if normal is not None:
-        material_kwargs["normalTexture"] = encode_image(normal)
+    mesh.visual = trimesh.visual.TextureVisuals(uv=vtx_uv, material=material)
 
-    # Assign PBR material
-    material = trimesh.visual.material.PBRMaterial(**material_kwargs)
-    mesh.visual.material = material
-
-    # Export GLB
-    mesh.export(mesh_path)
+    # Export to GLB
+    glb_data = export_glb(mesh)
+    with open(mesh_path, 'wb') as f:
+        f.write(glb_data)
 
 def save_mesh(mesh_path, vtx_pos, pos_idx, vtx_uv, uv_idx, texture, metallic=None, roughness=None, normal=None):
     """Save mesh using OBJ format."""
