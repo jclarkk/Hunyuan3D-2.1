@@ -912,6 +912,19 @@ class UNet2p5DConditionModel(torch.nn.Module):
                                 pbr_setting,
                             )
 
+    @torch.no_grad()
+    def set_pbr_settings(self, new_setting: List[str]) -> None:
+        """
+        Switch the active PBR channels *everywhere* in the UNet hierarchy.
+        """
+        new_setting = list(new_setting)  # make writable / ensure list
+        self.pbr_setting = new_setting
+
+        # recurse through *all* registered sub‑modules (depth‑first)
+        for m in self.modules():
+            if hasattr(m, "pbr_setting"):
+                m.pbr_setting = new_setting
+
     def __getattr__(self, name: str):
         try:
             return super().__getattr__(name)

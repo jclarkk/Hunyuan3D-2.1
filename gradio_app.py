@@ -229,6 +229,9 @@ def _gen_shape(
     num_chunks=200000,
     randomize_seed: bool = False,
 ):
+    i23d_worker.to("cuda")
+    print('Moved HunyuanDiT worker to GPU')
+
     if not MV_MODE and image is None and caption is None:
         raise gr.Error("Please provide either a caption or an image.")
     if MV_MODE:
@@ -311,6 +314,9 @@ def _gen_shape(
     time_meta['shape generation'] = time.time() - start_time
     logger.info("---Shape generation takes %s seconds ---" % (time.time() - start_time))
 
+    i23d_worker.to("cpu")
+    print('Moved HunyuanDiT worker to CPU')
+
     tmp_start = time.time()
     mesh = export_to_trimesh(outputs)[0]
     time_meta['export to trimesh'] = time.time() - tmp_start
@@ -337,6 +343,10 @@ def generation_all(
     check_box_rembg=False,
     num_chunks=200000,
     randomize_seed: bool = False,
+    texture_size: int = 4096,
+    pbr: bool = False,
+    super_resolution: str = 'NMKD',
+    num_views: int = 6,
 ):
     start_time_0 = time.time()
     mesh, image, save_folder, stats, seed = _gen_shape(
@@ -378,15 +388,26 @@ def generation_all(
     tmp_time = time.time()
 
     text_path = os.path.join(save_folder, f'textured_mesh.obj')
-    path_textured = tex_pipeline(mesh_path=path, image_path=image, output_mesh_path=text_path, save_glb=False)
+    path_textured = tex_pipeline(
+        mesh_path=path,
+        image_path=image,
+        output_mesh_path=text_path,
+        save_glb=False,
+        texture_size=texture_size,
+        pbr=pbr,
+        upscale_model=super_resolution,
+        num_views=num_views
+    )
+    glb_path_textured = os.path.join(save_folder, 'textured_mesh.glb')
+    shutil.copy(path_textured, glb_path_textured)
         
     logger.info("---Texture Generation takes %s seconds ---" % (time.time() - tmp_time))
     stats['time']['texture generation'] = time.time() - tmp_time
 
     tmp_time = time.time()
     # Convert textured OBJ to GLB using obj2gltf with PBR support
-    glb_path_textured = os.path.join(save_folder, 'textured_mesh.glb')
-    conversion_success = quick_convert_with_obj2gltf(path_textured, glb_path_textured)
+    # glb_path_textured = os.path.join(save_folder, 'textured_mesh.glb')
+    # conversion_success = quick_convert_with_obj2gltf(path_textured, glb_path_textured)
 
     logger.info("---Convert textured OBJ to GLB takes %s seconds ---" % (time.time() - tmp_time))
     stats['time']['convert textured OBJ to GLB'] = time.time() - tmp_time
@@ -523,7 +544,7 @@ def build_app():
                     file_out = gr.File(label="File", visible=False)
                     file_out2 = gr.File(label="File", visible=False)
 
-                with gr.Tabs(selected='tab_options' if TURBO_MODE else 'tab_export'):
+                with gr.Tabs(selected='tab_advanced_options'):
                     with gr.Tab("Options", id='tab_options', visible=TURBO_MODE):
                         gen_mode = gr.Radio(
                             label='Generation Mode',
@@ -561,12 +582,22 @@ Fast for very complex cases, Standard seldom use.',
                                                   step=1, label='Inference Steps')
                             octree_resolution = gr.Slider(maximum=512, 
                                                           minimum=16, 
-                                                          value=256, 
+                                                          value=512,
                                                           label='Octree Resolution')
                         with gr.Row():
                             cfg_scale = gr.Number(value=5.0, label='Guidance Scale', min_width=100)
                             num_chunks = gr.Slider(maximum=5000000, minimum=1000, value=8000,
                                                    label='Number of Chunks', min_width=100)
+                        with gr.Row():
+                            texture_size = gr.Slider(minimum=1024, maximum=8192, step=1024, value=4096,
+                                                     label='Texture Resolution')
+                            pbr = gr.Checkbox(label='PBR Texture', value=True)
+                            super_resolution = gr.Radio(
+                                ['None', 'Aura', 'NMKD', 'Flux', 'Topaz'],
+                                label='Super-Resolution (Install the method required, use README in folder)',
+                                value='NMKD')
+                            num_views = gr.Slider(minimum=6, maximum=24, step=2, value=8, label='Number of Views')
+
                     with gr.Tab("Export", id='tab_export'):
                         with gr.Row():
                             file_type = gr.Dropdown(label='File Type', 
@@ -648,6 +679,10 @@ Fast for very complex cases, Standard seldom use.',
                 check_box_rembg,
                 num_chunks,
                 randomize_seed,
+                texture_size,
+                pbr,
+                super_resolution,
+                num_views
             ],
             outputs=[file_out, file_out2, html_gen_mesh, stats, seed]
         ).then(
@@ -740,7 +775,7 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--host', type=str, default='0.0.0.0')
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--mc_algo', type=str, default='mc')
+    parser.add_argument('--mc_algo', type=str, default='dmc')
     parser.add_argument('--cache-path', type=str, default='./save_dir')
     parser.add_argument('--enable_t23d', action='store_true')
     parser.add_argument('--disable_tex', action='store_true')
@@ -748,7 +783,7 @@ if __name__ == '__main__':
     parser.add_argument('--compile', action='store_true')
     parser.add_argument('--low_vram_mode', action='store_true')
     args = parser.parse_args()
-    args.enable_flashvdm = False
+    # args.enable_flashvdm = False
 
     SAVE_DIR = args.cache_path
     os.makedirs(SAVE_DIR, exist_ok=True)
@@ -797,10 +832,10 @@ if __name__ == '__main__':
             #     texgen_worker.enable_model_cpu_offload()
 
             from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
-            conf = Hunyuan3DPaintConfig(max_num_view=8, resolution=768)
-            conf.realesrgan_ckpt_path = "hy3dpaint/ckpt/RealESRGAN_x4plus.pth"
+            conf = Hunyuan3DPaintConfig(hypaint_resolution=1024)
             conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
             conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
+            conf.multiview_pretrained_path = args.texgen_model_path
             tex_pipeline = Hunyuan3DPaintPipeline(conf)
         
             # Not help much, ignore for now.
@@ -830,9 +865,9 @@ if __name__ == '__main__':
     from hy3dshape import FaceReducer, FloaterRemover, DegenerateFaceRemover, MeshSimplifier, \
         Hunyuan3DDiTFlowMatchingPipeline
     from hy3dshape.pipelines import export_to_trimesh
-    from hy3dshape.rembg import BackgroundRemover
+    from hy3dshape.rmbg import RMBGRemover
 
-    rmbg_worker = BackgroundRemover()
+    rmbg_worker = RMBGRemover()
     i23d_worker = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
         args.model_path,
         subfolder=args.subfolder,

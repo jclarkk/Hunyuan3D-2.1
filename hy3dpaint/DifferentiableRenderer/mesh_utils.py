@@ -5,7 +5,7 @@
 # Users must comply with all terms and conditions of original licenses of these third-party
 # components and must ensure that the usage of the third party components adheres to
 # all relevant laws and regulations.
-
+import io
 # For avoidance of doubts, Hunyuan 3D means the large language models and
 # their software and algorithms, including trained model weights, parameters (including
 # optimizer states), machine-learning model code, inference-enabling code, training-enabling code,
@@ -17,8 +17,12 @@ import cv2
 import bpy
 import math
 import numpy as np
+import trimesh
 from io import StringIO
+from trimesh.exchange.gltf import export_glb
 from typing import Optional, Tuple, Dict, Any
+
+from PIL import Image
 
 
 def _safe_extract_attribute(obj: Any, attr_path: str, default: Any = None) -> Any:
@@ -189,6 +193,81 @@ def _create_mtl_file(base_path: str, texture_maps: Dict[str, str], is_pbr: bool)
             }
             _write_mtl_properties(f, properties)
 
+
+def save_glb_trimesh(
+        mesh_path,
+        vtx_pos,
+        pos_idx,
+        vtx_uv,
+        uv_idx,
+        texture,
+        metallic=None,
+        roughness=None,
+        normal=None
+):
+    import trimesh
+    import numpy as np
+    from PIL import Image
+    import cv2
+    from trimesh.exchange.gltf import export_glb
+
+    vtx_pos = _convert_to_numpy(vtx_pos, np.float32)
+    pos_idx = _convert_to_numpy(pos_idx, np.int32)
+    vtx_uv = _convert_to_numpy(vtx_uv, np.float32)
+
+    mesh = trimesh.Trimesh(vertices=vtx_pos, faces=pos_idx, process=False)
+
+    # Ensure UVs are valid
+    if vtx_uv is None or len(vtx_uv) != len(vtx_pos):
+        vtx_uv = np.zeros((len(vtx_pos), 2), dtype=np.float32)
+
+    def to_pil_image(img):
+        img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+        if img.ndim == 2 or img.shape[2] == 1:
+            img = np.repeat(img[:, :, np.newaxis], 3, axis=2)
+        return Image.fromarray(img)
+
+    def ensure_grayscale(img):
+        if img.ndim == 3 and img.shape[2] == 3:
+            img = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+            img = img.astype(np.float32) / 255.0
+        return img
+
+    base_image = to_pil_image(texture)
+
+    if normal is not None or (metallic is not None and roughness is not None):
+        # PBR material setup
+        normal_image = to_pil_image(normal) if normal is not None else None
+        if metallic is not None and roughness is not None:
+            metal_gray = ensure_grayscale(metallic)
+            rough_gray = ensure_grayscale(roughness)
+            zero_channel = np.zeros_like(metal_gray)
+            pbr_combined = np.stack([zero_channel, rough_gray, metal_gray], axis=-1)
+            metal_rough_image = to_pil_image(pbr_combined)
+        else:
+            metal_rough_image = None
+
+        material = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=base_image,
+            normalTexture=normal_image,
+            metallicRoughnessTexture=metal_rough_image,
+            baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+            metallicFactor=1.0 if metallic is not None else 0.0,
+            roughnessFactor=1.0
+        )
+    else:
+        # Simple material fallback
+        material = trimesh.visual.texture.SimpleMaterial(
+            image=base_image,
+            diffuse=(255, 255, 255)
+        )
+
+    mesh.visual = trimesh.visual.TextureVisuals(uv=vtx_uv, material=material)
+
+    # Export to GLB
+    glb_data = export_glb(mesh)
+    with open(mesh_path, 'wb') as f:
+        f.write(glb_data)
 
 def save_mesh(mesh_path, vtx_pos, pos_idx, vtx_uv, uv_idx, texture, metallic=None, roughness=None, normal=None):
     """Save mesh using OBJ format."""

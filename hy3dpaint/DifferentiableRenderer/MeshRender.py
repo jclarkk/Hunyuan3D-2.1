@@ -29,7 +29,7 @@ from .camera_utils import (
 )
 
 try:
-    from .mesh_utils import load_mesh, save_mesh
+    from .mesh_utils import load_mesh, save_mesh, save_glb_trimesh
 except:
     print("Bpy IO CAN NOT BE Imported!!!")
 
@@ -651,6 +651,46 @@ class MeshRender:
                 )
 
         save_mesh(
+            mesh_path,
+            vtx_pos,
+            pos_idx,
+            vtx_uv,
+            uv_idx,
+            texture_data,
+            metallic=texture_metallic,
+            roughness=texture_roughness,
+            normal=texture_normal,
+        )
+
+    def save_glb_mesh(self, mesh_path, downsample=False):
+        """
+        Save current mesh with textures to file.
+
+        Args:
+            mesh_path: Output file path
+            downsample: Whether to downsample textures by half
+        """
+
+        vtx_pos, pos_idx, vtx_uv, uv_idx = self.get_mesh(normalize=False)
+        texture_data = self.get_texture()
+        texture_metallic, texture_roughness = self.get_texture_mr()
+        texture_normal = self.get_texture_normal()
+        if downsample:
+            texture_data = cv2.resize(texture_data, (texture_data.shape[1] // 2, texture_data.shape[0] // 2))
+            if texture_metallic is not None:
+                texture_metallic = cv2.resize(
+                    texture_metallic, (texture_metallic.shape[1] // 2, texture_metallic.shape[0] // 2)
+                )
+            if texture_roughness is not None:
+                texture_roughness = cv2.resize(
+                    texture_roughness, (texture_roughness.shape[1] // 2, texture_roughness.shape[0] // 2)
+                )
+            if texture_normal is not None:
+                texture_normal = cv2.resize(
+                    texture_normal, (texture_normal.shape[1] // 2, texture_normal.shape[0] // 2)
+                )
+
+        save_glb_trimesh(
             mesh_path,
             vtx_pos,
             pos_idx,

@@ -34,6 +34,38 @@ def load_mesh(path):
     return mesh
 
 
+def reduce_face_with_meshlib(mesh: trimesh.Trimesh, max_facenum: int = 100000):
+    current_face_count = len(mesh.faces)
+    if current_face_count <= max_facenum:
+        return mesh
+
+    import meshlib.mrmeshpy as mrmeshpy
+    import meshlib.mrmeshnumpy as mrmeshnumpy
+    import multiprocessing
+
+    # Load mesh
+    mesh = mrmeshnumpy.meshFromFacesVerts(mesh.faces, mesh.vertices)
+
+    faces_to_delete = current_face_count - max_facenum
+    #  Setup simplification parameters
+    mesh.packOptimally()
+    settings = mrmeshpy.DecimateSettings()
+    settings.maxDeletedFaces = faces_to_delete
+    settings.subdivideParts = multiprocessing.cpu_count()
+    # settings.maxError = 0.001
+    settings.packMesh = True
+
+    print(f'Decimating mesh... targeting {max_facenum} faces from {current_face_count} faces')
+    print(f'Decimating mesh... Deleting {faces_to_delete} faces')
+    mrmeshpy.decimateMesh(mesh, settings)
+    print(f'Decimation done. Resulting mesh has {mesh.topology.faceSize()} faces')
+
+    out_verts = mrmeshnumpy.getNumpyVerts(mesh)
+    out_faces = mrmeshnumpy.getNumpyFaces(mesh.topology)
+
+    return trimesh.Trimesh(out_verts, out_faces)
+
+
 def reduce_face(mesh: pymeshlab.MeshSet, max_facenum: int = 200000):
     if max_facenum > mesh.current_mesh().face_number():
         return mesh
@@ -118,21 +150,19 @@ def import_mesh(mesh: Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutpu
 class FaceReducer:
     @synchronize_timer('FaceReducer')
     def __call__(
-        self,
-        mesh: Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutput, str],
-        max_facenum: int = 40000
+            self,
+            mesh: Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutput, str],
+            max_facenum: int = 100000
     ) -> Union[pymeshlab.MeshSet, trimesh.Trimesh]:
-        ms = import_mesh(mesh)
-        ms = reduce_face(ms, max_facenum=max_facenum)
-        mesh = export_mesh(mesh, ms)
+        mesh = reduce_face_with_meshlib(mesh, max_facenum=max_facenum)
         return mesh
 
 
 class FloaterRemover:
     @synchronize_timer('FloaterRemover')
     def __call__(
-        self,
-        mesh: Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutput, str],
+            self,
+            mesh: Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutput, str],
     ) -> Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutput]:
         ms = import_mesh(mesh)
         ms = remove_floater(ms)
@@ -143,8 +173,8 @@ class FloaterRemover:
 class DegenerateFaceRemover:
     @synchronize_timer('DegenerateFaceRemover')
     def __call__(
-        self,
-        mesh: Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutput, str],
+            self,
+            mesh: Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutput, str],
     ) -> Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutput]:
         ms = import_mesh(mesh)
 
@@ -185,8 +215,8 @@ class MeshSimplifier:
 
     @synchronize_timer('MeshSimplifier')
     def __call__(
-        self,
-        mesh: Union[trimesh.Trimesh],
+            self,
+            mesh: Union[trimesh.Trimesh],
     ) -> Union[trimesh.Trimesh]:
         with tempfile.NamedTemporaryFile(suffix='.obj', delete=False) as temp_input:
             with tempfile.NamedTemporaryFile(suffix='.obj', delete=False) as temp_output:

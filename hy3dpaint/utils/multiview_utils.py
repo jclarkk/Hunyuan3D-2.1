@@ -34,15 +34,16 @@ class multiviewDiffusionNet:
         self.cfg = cfg
         self.mode = self.cfg.model.params.stable_diffusion_config.custom_pipeline[2:]
 
-        model_path = huggingface_hub.snapshot_download(
-            repo_id=config.multiview_pretrained_path,
-            allow_patterns=["hunyuan3d-paintpbr-v2-1/*"],
-        )
+        if not config.local_files_only:
+            model_path = huggingface_hub.snapshot_download(
+                repo_id='tencent/Hunyuan3D-2.1',
+                allow_patterns=["hunyuan3d-paintpbr-v2-1/*"],
+            )
 
         model_path = os.path.join(model_path, "hunyuan3d-paintpbr-v2-1")
         pipeline = DiffusionPipeline.from_pretrained(
             model_path,
-            custom_pipeline=custom_pipeline, 
+            custom_pipeline=custom_pipeline,
             torch_dtype=torch.float16
         )
 
@@ -126,3 +127,93 @@ class multiviewDiffusionNet:
             mvd_image = {"hdr": mvd_image}
 
         return mvd_image
+
+
+class MetalRoughnessOnlyNet(multiviewDiffusionNet):
+    def __init__(self, config) -> None:
+        super().__init__(config)
+
+    @torch.no_grad()
+    def __call__(self, images, conditions, prompt=None, custom_view_size=None, resize_input=False):
+        """Override the parent __call__ to ensure we return the proper format"""
+        result = self.forward_one(
+            images, conditions, prompt=prompt, custom_view_size=custom_view_size, resize_input=resize_input
+        )
+        return result
+
+    def forward_one(self, input_images, control_images, prompt=None, custom_view_size=None, resize_input=False):
+        """Generate MR textures only"""
+        self.seed_everything(0)
+
+        custom_view_size = custom_view_size if custom_view_size is not None else self.pipeline.view_size
+
+        if not isinstance(input_images, List):
+            input_images = [input_images]
+
+        if not resize_input:
+            input_images = [
+                input_image.resize((self.pipeline.view_size, self.pipeline.view_size)) for input_image in input_images
+            ]
+        else:
+            input_images = [input_image.resize((custom_view_size, custom_view_size)) for input_image in input_images]
+
+        # Process control images
+        for i in range(len(control_images)):
+            control_images[i] = control_images[i].resize((custom_view_size, custom_view_size))
+            if control_images[i].mode == "L":
+                control_images[i] = control_images[i].point(lambda x: 255 if x > 1 else 0, mode="1")
+
+        kwargs = dict(generator=torch.Generator(device=self.pipeline.device).manual_seed(0))
+
+        num_view = len(control_images) // 2
+        normal_image = [[control_images[i] for i in range(num_view)]]
+        position_image = [[control_images[i + num_view] for i in range(num_view)]]
+
+        kwargs["width"] = custom_view_size
+        kwargs["height"] = custom_view_size
+        kwargs["num_in_batch"] = num_view
+        kwargs["images_normal"] = normal_image
+        kwargs["images_position"] = position_image
+
+        if hasattr(self.pipeline.unet, "use_dino") and self.pipeline.unet.use_dino:
+            dino_hidden_states = self.dino_v2(input_images[0])
+            kwargs["dino_hidden_states"] = dino_hidden_states
+
+        sync_condition = None
+        infer_steps_dict = {
+            "EulerAncestralDiscreteScheduler": 30,
+            "UniPCMultistepScheduler": 15,
+            "DDIMScheduler": 50,
+            "ShiftSNRScheduler": 15,
+        }
+
+        try:
+            # Run the pipeline - it will generate both albedo and MR
+            mvd_image = self.pipeline(
+                input_images[0:1],
+                num_inference_steps=infer_steps_dict[self.pipeline.scheduler.__class__.__name__],
+                prompt=prompt,
+                sync_condition=sync_condition,
+                guidance_scale=3.0,
+                **kwargs,
+            ).images
+
+            # The pipeline outputs all views concatenated: [albedo_views..., mr_views...]
+            # Since it's trained with pbr_settings=["albedo", "mr"],
+            # first half is albedo, second half is MR
+            if "pbr" in self.mode:
+                # Extract MR views (second half)
+                mr_views = mvd_image[num_view:num_view * 2] if len(mvd_image) >= num_view * 2 else mvd_image[num_view:]
+
+                # Return in the expected format
+                return {"mr": mr_views}
+            else:
+                # Fallback if not in PBR mode
+                return {"mr": mvd_image[:num_view]}
+
+        except Exception as e:
+            print(f"Error in forward_one: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return empty list to avoid None error
+            return {"mr": []}

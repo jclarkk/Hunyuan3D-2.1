@@ -117,6 +117,8 @@ class HunyuanPaintPipeline(StableDiffusionPipeline):
 
     def set_pbr_settings(self, pbr_settings: List[str]):
         self.pbr_settings = pbr_settings
+        if hasattr(self.unet, "set_pbr_settings"):
+            self.unet.set_pbr_settings(pbr_settings)
 
     def set_learned_parameters(self):
 
@@ -207,8 +209,6 @@ class HunyuanPaintPipeline(StableDiffusionPipeline):
         Returns:
             List[PIL.Image]: Generated multiview PBR textures
         """
-
-        self.prepare()
         if images is None:
             raise ValueError("Inputting embeddings not supported for this pipeline. Please pass an image.")
         assert not isinstance(images, torch.Tensor)
