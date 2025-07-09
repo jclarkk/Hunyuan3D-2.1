@@ -15,7 +15,7 @@ from x_transformers.autoregressive_wrapper import (
 from .miche_conditioner import PointConditioner
 from functools import partial
 from tqdm import tqdm
-from silkutils.silksong_tokenization import get_tokenizer_silksong
+from silksong.silkutils.silksong_tokenization import get_tokenizer_silksong
 
 # helper functions
 
