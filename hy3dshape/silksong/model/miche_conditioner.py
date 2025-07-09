@@ -34,7 +34,7 @@ class PointConditioner(torch.nn.Module):
             if not os.path.exists(ckpt_path):
                 ckpt_path=None
                 print('[WARNING] Michelangelo ckpt not exist, please check if you are training')
-            config_path = 'miche/shapevae-256.yaml'
+            config_path = 'hy3dshape/silksong/miche/shapevae-256.yaml'
 
             self.feature_dim = 1024    # embedding dimension
             self.cond_length = 257     # length of embedding
