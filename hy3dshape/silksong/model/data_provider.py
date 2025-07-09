@@ -15,9 +15,9 @@ from kiui.op import recenter
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data import Sampler
 
-from ..silkutils import ss_platform
-from ..silkutils.meshdata.mesh_io import load_mesh_nonorm, normalize_mesh
-from ..silkutils.silksong_tokenization import get_tokenizer_silksong, tokenize_mesh_ss
+from silksong.silkutils import ss_platform
+from silksong.silkutils.meshdata.mesh_io import load_mesh_nonorm, normalize_mesh
+from silksong.silkutils.silksong_tokenization import get_tokenizer_silksong, tokenize_mesh_ss
 
 
 class ProgressivelyBalancedSampler(Sampler):

@@ -5,8 +5,8 @@ import numpy as np
 import torch
 import trimesh
 from kiui.mesh_utils import clean_mesh
-from silkutils.meshdata.mesh_io import load_mesh_nonorm, normalize_mesh
-from silkutils.silksong_tokenization import get_tokenizer_silksong, tokenize_mesh_ss
+from silksong.silkutils.meshdata.mesh_io import load_mesh_nonorm, normalize_mesh
+from silksong.silkutils.silksong_tokenization import get_tokenizer_silksong, tokenize_mesh_ss
 from x_transformers.autoregressive_wrapper import top_p, top_k
 
 

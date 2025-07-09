@@ -4,9 +4,9 @@ import torch
 import trimesh
 from safetensors.torch import load_file
 
-from .model.data_provider_infer import InferDataset, joint_filter, max_filter, collate_fn_infer
-from .model.model import SSMeshTransformer
-from .silkutils.silksong_tokenization import get_tokenizer_silksong, detokenize_mesh_ss
+from silksong.model.data_provider_infer import InferDataset, joint_filter, max_filter, collate_fn_infer
+from silksong.model.model import SSMeshTransformer
+from silksong.silkutils.silksong_tokenization import get_tokenizer_silksong, detokenize_mesh_ss
 
 
 class MeshSilkSongPipeline:
