@@ -172,7 +172,7 @@ class FaceReducer:
             faces = self.quads_to_triangles(faces)
             mesh = trimesh.Trimesh(vertices, faces)
         elif remesh_method is not None and remesh_method == "Silksong":
-            from ..silksong.pipeline import MeshSilkSongPipeline
+            from silksong.pipeline import MeshSilkSongPipeline
             pipeline = MeshSilkSongPipeline()
             mesh = pipeline(mesh)
 
