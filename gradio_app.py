@@ -747,7 +747,7 @@ Fast for very complex cases, Standard seldom use.',
                 mesh = floater_remove_worker(mesh)
                 mesh = degenerate_face_remove_worker(mesh)
                 if reduce_face:
-                    mesh = face_reduce_worker(mesh, target_face_num)
+                    mesh = face_reduce_worker(mesh, target_face_num, remesh_method=remesh_method)
                 save_folder = gen_save_folder()
                 path = export_mesh(mesh, save_folder, textured=False, type=file_type)
 
