@@ -159,8 +159,12 @@ class FaceReducer:
 
         mesh = reduce_face_with_meshlib(mesh, max_facenum=max_facenum)
 
-        if remesh_method is not None and remesh_method == "im":
+        if remesh_method is not None and remesh_method == "InstantMeshes":
             import pynanoinstantmeshes as PyNIM
+            import time
+
+            t0 = time.time()
+
             vertices, faces = PyNIM.remesh(
                 np.array(mesh.vertices, dtype=np.float32),
                 np.array(mesh.faces, dtype=np.uint32),
@@ -171,10 +175,20 @@ class FaceReducer:
             vertices = vertices.astype(np.float32)
             faces = self.quads_to_triangles(faces)
             mesh = trimesh.Trimesh(vertices, faces)
+
+            t1 = time.time()
+            print(f"PyNanoInstantMeshes took {t1 - t0:.2f} seconds")
         elif remesh_method is not None and remesh_method == "Silksong":
             from silksong.pipeline import MeshSilkSongPipeline
+            import time
+
+            t0 = time.time()
+
             pipeline = MeshSilkSongPipeline()
             mesh = pipeline(mesh)
+
+            t1 = time.time()
+            print(f"MeshSilkSongPipeline took {t1 - t0:.2f} seconds")
 
         return mesh
 
