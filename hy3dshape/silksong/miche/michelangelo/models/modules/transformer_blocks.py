@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
 
-from miche.michelangelo.models.modules.checkpoint import checkpoint
+from silksong.miche.michelangelo.models.modules.checkpoint import checkpoint
 
 # Initialize linear layers with normal distribution weights and zero biases
 def init_linear(l, stddev):
