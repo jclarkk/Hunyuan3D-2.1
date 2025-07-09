@@ -1,6 +1,6 @@
 import traceback
 
-import model.data_provider as data_pro
+import silksong.model.data_provider as data_pro
 import numpy as np
 import torch
 import trimesh
