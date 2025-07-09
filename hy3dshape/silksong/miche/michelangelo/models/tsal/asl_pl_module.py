@@ -10,7 +10,7 @@ from torch.optim import lr_scheduler
 from typing import Union
 from functools import partial
 
-from miche.michelangelo.utils import instantiate_from_config
+from silksong.miche.michelangelo.utils import instantiate_from_config
 
 from .tsal_base import (
     AlignedShapeAsLatentModule,
@@ -18,7 +18,7 @@ from .tsal_base import (
     Latent2MeshOutput,
     AlignedMeshOutput
 )
-from miche.michelangelo.models.tsal.inference_utils import extract_geometry
+from silksong.miche.michelangelo.models.tsal.inference_utils import extract_geometry
 import trimesh
 
 class AlignedShapeAsLatentPLModule(nn.Module):

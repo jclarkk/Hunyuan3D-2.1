@@ -6,10 +6,10 @@ from typing import Optional
 from einops import repeat
 import math
 
-from miche.michelangelo.models.modules import checkpoint
-from miche.michelangelo.models.modules.embedder import FourierEmbedder
-from miche.michelangelo.models.modules.distributions import DiagonalGaussianDistribution
-from miche.michelangelo.models.modules.transformer_blocks import (
+from silksong.miche.michelangelo.models.modules import checkpoint
+from silksong.miche.michelangelo.models.modules.embedder import FourierEmbedder
+from silksong.miche.michelangelo.models.modules.distributions import DiagonalGaussianDistribution
+from silksong.miche.michelangelo.models.modules.transformer_blocks import (
     ResidualCrossAttentionBlock,
     Transformer
 )

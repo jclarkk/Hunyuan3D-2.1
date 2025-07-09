@@ -5,8 +5,8 @@ import torch.nn.functional as F
 
 from typing import Optional
 
-from miche.michelangelo.models.modules.distributions import DiagonalGaussianDistribution
-from miche.michelangelo.utils import misc
+from silksong.miche.michelangelo.models.modules.distributions import DiagonalGaussianDistribution
+from silksong.miche.michelangelo.utils import misc
 
 
 class ContrastKLNearFar(nn.Module):
