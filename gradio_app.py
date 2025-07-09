@@ -438,8 +438,7 @@ def shape_generation(
     octree_resolution=256,
     check_box_rembg=False,
     num_chunks=200000,
-    randomize_seed: bool = False,
-    remesh_method: str = None
+    randomize_seed: bool = False
 ):
     start_time_0 = time.time()
     mesh, image, save_folder, stats, seed = _gen_shape(
@@ -459,9 +458,6 @@ def shape_generation(
     )
     stats['time']['total'] = time.time() - start_time_0
     mesh.metadata['extras'] = stats
-
-    if remesh_method is not None:
-        mesh = face_reduce_worker(mesh, remesh_method=remesh_method)
 
     path = export_mesh(mesh, save_folder, textured=False)
     model_viewer_html = build_model_viewer_html(save_folder, height=HTML_HEIGHT, width=HTML_WIDTH)
@@ -657,8 +653,7 @@ Fast for very complex cases, Standard seldom use.',
                 octree_resolution,
                 check_box_rembg,
                 num_chunks,
-                randomize_seed,
-                remesh_method
+                randomize_seed
             ],
             outputs=[file_out, html_gen_mesh, stats, seed]
         ).then(
