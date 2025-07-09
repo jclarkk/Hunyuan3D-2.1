@@ -194,8 +194,7 @@ def _create_mtl_file(base_path: str, texture_maps: Dict[str, str], is_pbr: bool)
             _write_mtl_properties(f, properties)
 
 
-def save_glb_trimesh(
-        mesh_path,
+def create_trimesh_object(
         vtx_pos,
         pos_idx,
         vtx_uv,
@@ -205,12 +204,6 @@ def save_glb_trimesh(
         roughness=None,
         normal=None
 ):
-    import trimesh
-    import numpy as np
-    from PIL import Image
-    import cv2
-    from trimesh.exchange.gltf import export_glb
-
     vtx_pos = _convert_to_numpy(vtx_pos, np.float32)
     pos_idx = _convert_to_numpy(pos_idx, np.int32)
     vtx_uv = _convert_to_numpy(vtx_uv, np.float32)
@@ -263,6 +256,24 @@ def save_glb_trimesh(
         )
 
     mesh.visual = trimesh.visual.TextureVisuals(uv=vtx_uv, material=material)
+
+    return mesh
+
+
+def save_glb_trimesh(
+        mesh_path,
+        vtx_pos,
+        pos_idx,
+        vtx_uv,
+        uv_idx,
+        texture,
+        metallic=None,
+        roughness=None,
+        normal=None
+):
+    mesh = create_trimesh_object(
+        vtx_pos, pos_idx, vtx_uv, uv_idx, texture, metallic=metallic, roughness=roughness, normal=normal
+    )
 
     # Export to GLB
     glb_data = export_glb(mesh)

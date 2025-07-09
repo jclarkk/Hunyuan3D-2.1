@@ -17,6 +17,7 @@ import os
 from functools import wraps
 
 import torch
+import trimesh
 
 
 def get_logger(name):
@@ -87,10 +88,10 @@ class synchronize_timer:
 
 
 def smart_load_model(
-    model_path,
-    subfolder,
-    use_safetensors,
-    variant,
+        model_path,
+        subfolder,
+        use_safetensors,
+        variant,
 ):
     original_model_path = model_path
     # try local path
@@ -106,7 +107,7 @@ def smart_load_model(
             path = snapshot_download(
                 repo_id=original_model_path,
                 allow_patterns=[f"{subfolder}/*"],  # 关键修改：模式匹配子文件夹
-                local_dir=model_fld 
+                local_dir=model_fld
             )
             model_path = os.path.join(path, subfolder)  # 保持路径拼接逻辑不变
         except ImportError:
@@ -126,3 +127,23 @@ def smart_load_model(
     config_path = os.path.join(model_path, 'config.yaml')
     ckpt_path = os.path.join(model_path, ckpt_name)
     return config_path, ckpt_path
+
+
+def normalize_mesh(mesh: trimesh.Trimesh):
+    mesh.face_normals  # This ensures face normals are computed and cached
+
+    # If the mesh has no vertex normals, compute those as well
+    if mesh.vertex_normals is None or len(mesh.vertex_normals) != len(mesh.vertices):
+        mesh.vertex_normals = mesh.vertex_normals
+
+    # Ensure the mesh is watertight and normals are consistent
+    mesh.rezero()
+    mesh.remove_duplicate_faces()
+    mesh.remove_degenerate_faces()
+    mesh.remove_infinite_values()
+    mesh.fix_normals()
+
+    centroid = mesh.vertices.mean(0)
+    mesh.vertices = mesh.vertices - centroid
+
+    return mesh

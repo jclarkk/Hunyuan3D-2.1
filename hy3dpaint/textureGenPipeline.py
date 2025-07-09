@@ -25,7 +25,6 @@ from DifferentiableRenderer.MeshRender import MeshRender
 from hy3dpaint.mvadapter.pipeline import MVAdapterPipelineWrapper
 from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_i2mv_sdxl import MVAdapterI2MVSDXLPipeline
 from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_t2mv_sdxl import MVAdapterT2MVSDXLPipeline
-from utils.simplify_mesh_utils import remesh_mesh
 from utils.multiview_utils import multiviewDiffusionNet, MetalRoughnessOnlyNet
 from utils.pipeline_utils import ViewProcessor
 import warnings
@@ -36,6 +35,7 @@ from diffusers.utils import logging as diffusers_logging
 diffusers_logging.set_verbosity(50)
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"
+
 
 def aggressive_memory_cleanup():
     """Aggressively clean up GPU memory"""
@@ -136,49 +136,46 @@ class Hunyuan3DPaintPipeline:
         print("Models Loaded.")
 
     @torch.no_grad()
-    def __call__(self, mesh_path=None, image_path=None, prompt=None, output_mesh_path=None, use_remesh=False, save_glb=True,
-                 upscale_model='NMKD', pbr=True, texture_size=4096, seed=42, unwrap_method='xatlas', num_views=6):
+    def __call__(self, mesh_path=None, image_path=None, prompt=None, use_remesh=False, upscale_model='NMKD', pbr=True,
+                 texture_size=4096, seed=42, unwrap_method='xatlas', num_views=6):
         self.config.texture_size = texture_size
         self.render.set_default_texture_resolution(texture_size)
 
         """Generate texture for 3D mesh using multiview diffusion"""
         image_prompt = None
         if image_path is not None:
-            # Ensure image_prompt is a list
+            # Ensure image_prompt is a PIL image if it's not a list.
             if isinstance(image_path, str):
-                image_prompt = Image.open(image_path)
+                image_prompt = [Image.open(image_path)]
             elif isinstance(image_path, Image.Image):
-                image_prompt = image_path
-            if not isinstance(image_prompt, List):
-                image_prompt = [image_prompt]
-            else:
-                image_prompt = image_path
-
-        # Process mesh
-        path = os.path.dirname(mesh_path)
-        if use_remesh:
-            processed_mesh_path = os.path.join(path, "white_mesh_remesh.obj")
-            remesh_mesh(mesh_path, processed_mesh_path)
-        else:
-            processed_mesh_path = mesh_path
-
-        # Output path
-        if output_mesh_path is None:
-            output_mesh_path = os.path.join(path, f"textured_mesh.obj")
+                image_prompt = [image_path]
+            elif isinstance(image_path, List):
+                image_prompt = []
+                for img in image_path:
+                    if isinstance(img, str):
+                        img = Image.open(img)
+                    elif not isinstance(img, Image.Image):
+                        raise ValueError("image_path must be a string or a PIL.Image object")
+                    image_prompt.append(img)
 
         # Load mesh
-        mesh = trimesh.load(processed_mesh_path)
+        if isinstance(mesh_path, str):
+            mesh = trimesh.load(mesh_path)
+        elif isinstance(mesh_path, trimesh.Trimesh):
+            mesh = mesh_path
+        else:
+            raise ValueError("mesh_path must be a string or a trimesh.Trimesh object")
 
         print('Wrapping UV...')
         t0 = time.time()
         if unwrap_method == 'open3d':
-            from .utils.uvwrap_utils import open3d_mesh_uv_wrap
+            from utils.uvwrap_utils import open3d_mesh_uv_wrap
             mesh = open3d_mesh_uv_wrap(mesh, resolution=texture_size)
         elif unwrap_method == 'bpy':
-            from .utils.uvwrap_utils import bpy_unwrap_mesh
+            from utils.uvwrap_utils import bpy_unwrap_mesh
             mesh = bpy_unwrap_mesh(mesh)
         elif unwrap_method == 'xatlas':
-            from .utils.uvwrap_utils import mesh_uv_wrap
+            from utils.uvwrap_utils import mesh_uv_wrap
             mesh = mesh_uv_wrap(mesh, resolution=texture_size)
         else:
             raise ValueError(f"Invalid unwrap method {unwrap_method}")
@@ -327,7 +324,8 @@ class Hunyuan3DPaintPipeline:
 
                 # Resize the MR views to match the albedo views resolution
                 for i in range(len(mr_views["mr"])):
-                    mr_views["mr"][i] = mr_views["mr"][i].resize((self.config.hypaint_resolution, self.config.hypaint_resolution))
+                    mr_views["mr"][i] = mr_views["mr"][i].resize(
+                        (self.config.hypaint_resolution, self.config.hypaint_resolution))
 
                 # Recreate multiviews dict with CPU albedo and new MR
                 multiviews = {
@@ -393,7 +391,8 @@ class Hunyuan3DPaintPipeline:
                 (self.config.render_size, self.config.render_size)
             )
             if pbr:
-                enhance_images["mr"][i] = enhance_images["mr"][i].resize((self.config.render_size, self.config.render_size))
+                enhance_images["mr"][i] = enhance_images["mr"][i].resize(
+                    (self.config.render_size, self.config.render_size))
         texture, mask = self.view_processor.bake_from_multiview(
             enhance_images["albedo"], selected_camera_elevs, selected_camera_azims, selected_view_weights
         )
@@ -414,8 +413,8 @@ class Hunyuan3DPaintPipeline:
             texture_mr = self.view_processor.texture_inpaint(texture_mr, mask_mr_np)
             self.render.set_texture_mr(texture_mr)
 
-        self.render.save_glb_mesh(output_mesh_path, downsample=True)
+        mesh = self.render.get_trimesh()
         t1 = time.time()
         print('Inpainting and saving mesh took {:.2f} seconds'.format(t1 - t0))
 
-        return output_mesh_path
+        return mesh

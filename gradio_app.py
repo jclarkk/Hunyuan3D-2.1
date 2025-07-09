@@ -388,18 +388,16 @@ def generation_all(
     tmp_time = time.time()
 
     text_path = os.path.join(save_folder, f'textured_mesh.obj')
-    path_textured = tex_pipeline(
+    mesh = tex_pipeline(
         mesh_path=path,
         image_path=image,
-        output_mesh_path=text_path,
-        save_glb=False,
         texture_size=texture_size,
         pbr=pbr,
         upscale_model=super_resolution,
         num_views=num_views
     )
     glb_path_textured = os.path.join(save_folder, 'textured_mesh.glb')
-    shutil.copy(path_textured, glb_path_textured)
+    mesh.export(glb_path_textured)
         
     logger.info("---Texture Generation takes %s seconds ---" % (time.time() - tmp_time))
     stats['time']['texture generation'] = time.time() - tmp_time

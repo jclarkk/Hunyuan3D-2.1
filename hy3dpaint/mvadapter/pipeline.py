@@ -59,11 +59,6 @@ class MVAdapterPipelineWrapper:
             local_files_only=local_files_only,
         )
 
-        # Enable memory efficient attention if available
-        if hasattr(pipe, 'enable_xformers_memory_efficient_attention'):
-            pipe.enable_xformers_memory_efficient_attention()
-            print("MV-Adapter: Enabled xformers memory efficient attention")
-
         pipe.to(device, dtype=torch.float16)
 
         return cls(pipe, device=device)

@@ -29,7 +29,7 @@ from .camera_utils import (
 )
 
 try:
-    from .mesh_utils import load_mesh, save_mesh, save_glb_trimesh
+    from .mesh_utils import load_mesh, save_mesh, save_glb_trimesh, create_trimesh_object
 except:
     print("Bpy IO CAN NOT BE Imported!!!")
 
@@ -652,6 +652,23 @@ class MeshRender:
 
         save_mesh(
             mesh_path,
+            vtx_pos,
+            pos_idx,
+            vtx_uv,
+            uv_idx,
+            texture_data,
+            metallic=texture_metallic,
+            roughness=texture_roughness,
+            normal=texture_normal,
+        )
+
+    def get_trimesh(self):
+        vtx_pos, pos_idx, vtx_uv, uv_idx = self.get_mesh(normalize=False)
+        texture_data = self.get_texture()
+        texture_metallic, texture_roughness = self.get_texture_mr()
+        texture_normal = self.get_texture_normal()
+
+        return create_trimesh_object(
             vtx_pos,
             pos_idx,
             vtx_uv,
