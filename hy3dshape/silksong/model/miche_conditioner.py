@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from beartype import beartype
-from miche.encode import load_model
+from silksong.miche.encode import load_model
 import os
 # helper functions
 
