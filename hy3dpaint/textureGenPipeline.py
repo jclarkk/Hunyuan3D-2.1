@@ -373,12 +373,22 @@ class Hunyuan3DPaintPipeline:
             upscaler = None
 
         if upscaler is not None:
-            for i in range(len(enhance_images["albedo"])):
-                enhance_images["albedo"][i] = upscaler(enhance_images["albedo"][i])
-                if pbr:
-                    enhance_images["mr"][i] = upscaler(enhance_images["mr"][i])
+            resized_images = []
+            for i, img in enumerate(enhance_images["albedo"]):
+                if i < 6:
+                    resized_images.append(upscaler(img))
+                else:
+                    new_size = (img.width * 4, img.height * 4)
+                    resized_images.append(img.resize(new_size, resample=Image.LANCZOS))
+            enhance_images["albedo"] = resized_images
 
-            del upscaler
+            # Process mr (if available)
+            if pbr and "mr" in enhance_images:
+                resized_mr = []
+                for i, img in enumerate(enhance_images["mr"]):
+                    new_size = (img.width * 4, img.height * 4)
+                    resized_mr.append(img.resize(new_size, resample=Image.LANCZOS))
+                enhance_images["mr"] = resized_mr
 
         t1 = time.time()
         print(f"Upscaling took {t1 - t0:.2f} seconds")
