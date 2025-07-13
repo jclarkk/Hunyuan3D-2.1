@@ -358,16 +358,16 @@ class Hunyuan3DPaintPipeline:
             enhance_images["mr"] = copy.deepcopy(multiviews["mr"])
 
         if upscale_model == 'Aura':
-            from .upscalers.pipelines import AuraSRUpscalerPipeline
+            from hy3dpaint.upscalers.pipelines import AuraSRUpscalerPipeline
             upscaler = AuraSRUpscalerPipeline.from_pretrained()
         elif upscale_model == 'NMKD':
-            from .upscalers.pipelines import NMKDSiaxUpscalerPipeline
+            from hy3dpaint.upscalers.pipelines import NMKDSiaxUpscalerPipeline
             upscaler = NMKDSiaxUpscalerPipeline.from_pretrained(self.config.device)
         elif upscale_model == 'Flux':
-            from .upscalers.pipelines import FluxUpscalerPipeline
+            from hy3dpaint.upscalers.pipelines import FluxUpscalerPipeline
             upscaler = FluxUpscalerPipeline.from_pretrained(self.config.device)
         elif upscale_model == 'Topaz':
-            from .upscalers.pipelines import TopazAPIUpscalerPipeline
+            from hy3dpaint.upscalers.pipelines import TopazAPIUpscalerPipeline
             upscaler = TopazAPIUpscalerPipeline()
         else:
             upscaler = None
