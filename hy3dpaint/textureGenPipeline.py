@@ -160,7 +160,7 @@ class Hunyuan3DPaintPipeline:
 
         # Load mesh
         if isinstance(mesh_path, str):
-            mesh = trimesh.load(mesh_path)
+            mesh = trimesh.load(mesh_path, force='mesh')
         elif isinstance(mesh_path, trimesh.Trimesh):
             mesh = mesh_path
         else:

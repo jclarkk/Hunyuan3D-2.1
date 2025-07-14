@@ -37,7 +37,7 @@ def run(args):
     # Reduce face count
     face_limit = 200000
     if (args.remesh_method is not None and args.remesh_method != 'None') or len(mesh.faces) > face_limit:
-        from hy3dshape.hy3dshape.postprocessors import FaceReducer
+        from hy3dshape.postprocessors import FaceReducer
         mesh = FaceReducer()(mesh, remesh_method=args.remesh_method, max_facenum=face_limit)
 
         # Check if face count is still too high
