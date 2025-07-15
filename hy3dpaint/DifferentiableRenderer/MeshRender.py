@@ -5,6 +5,7 @@
 # Users must comply with all terms and conditions of original licenses of these third-party
 # components and must ensure that the usage of the third party components adheres to
 # all relevant laws and regulations.
+from concurrent.futures import ThreadPoolExecutor
 
 # For avoidance of doubts, Hunyuan 3D means the large language models and
 # their software and algorithms, including trained model weights, parameters (including
@@ -17,6 +18,7 @@ import torch
 import trimesh
 import numpy as np
 from PIL import Image
+import multiprocessing as mp
 import torch.nn.functional as F
 from typing import Union, Optional, Tuple, List, Any, Callable
 from dataclasses import dataclass
@@ -27,6 +29,7 @@ from .camera_utils import (
     get_orthographic_projection_matrix,
     get_perspective_projection_matrix,
 )
+from .inpaint import OptimizedInpainter
 
 try:
     from .mesh_utils import load_mesh, save_mesh, save_glb_trimesh, create_trimesh_object
@@ -1434,6 +1437,94 @@ class MeshRender:
 
         return texture_merge, trust_map_merge > 1e-8
 
+    @staticmethod
+    def parallel_tiles_inpainting(texture_np: np.ndarray,
+                                  mask: np.ndarray,
+                                  tile_size: int = 256,
+                                  overlap: int = 32,
+                                  method: int = cv2.INPAINT_NS,
+                                  radius: int = 3) -> np.ndarray:
+        """
+        Split image into overlapping tiles and process in parallel.
+        This maintains quality while speeding up processing significantly.
+        """
+        h, w = texture_np.shape[:2]
+        texture_uint8 = (texture_np * 255).astype(np.uint8)
+        mask_inv = 255 - mask
+
+        accum = np.zeros_like(texture_uint8, dtype=np.float32)
+        w_sum = np.zeros((h, w), dtype=np.float32)
+
+        # Calculate tile positions with overlap
+        tiles = [
+            (x, y, min(x + tile_size, w), min(y + tile_size, h))
+            for y in range(0, h, tile_size - overlap)
+            for x in range(0, w, tile_size - overlap)
+        ]
+
+        def process_tile(tile_coords):
+            x0, y0, x1, y1 = tile_coords
+            tile_mask = mask_inv[y0:y1, x0:x1]
+            if np.sum(tile_mask) == 0:
+                return None
+
+            pad = radius * 2
+            xs, ys = max(0, x0 - pad), max(0, y0 - pad)
+            xe, ye = min(w, x1 + pad), min(h, y1 + pad)
+
+            tile_img = texture_uint8[ys:ye, xs:xe]
+            tile_mask_pad = mask_inv[ys:ye, xs:xe]
+
+            inpainted = cv2.inpaint(tile_img, tile_mask_pad, radius, method)
+
+            offset_y = y0 - ys
+            offset_x = x0 - xs
+            center = inpainted[offset_y:offset_y + (y1 - y0), offset_x:offset_x + (x1 - x0)]
+
+            return (x0, y0, x1, y1, center)
+
+        from concurrent.futures import ThreadPoolExecutor
+        import multiprocessing as mp
+        with ThreadPoolExecutor(max_workers=mp.cpu_count()) as executor:
+            results = list(executor.map(process_tile, tiles))
+
+        for res in results:
+            if res is None:
+                continue
+            x0, y0, x1, y1, tile_result = res
+            th, tw = tile_result.shape[:2]
+            fade = overlap // 2
+            fade = min(fade, th // 2, tw // 2)
+
+            weight = np.ones((th, tw), dtype=np.float32)
+
+            if fade > 0:
+                wx = np.linspace(1, 0, fade + 2, dtype=np.float32)[1:-1]
+                wy = wx.copy()
+
+                weight[:fade, :] *= wy[::-1, None]
+                weight[-fade:, :] *= wy[:, None]
+                weight[:, :fade] *= wx[None, ::-1]
+                weight[:, -fade:] *= wx[None, :]
+
+            if texture_uint8.ndim == 3:
+                for c in range(texture_uint8.shape[2]):
+                    accum[y0:y1, x0:x1, c] += tile_result[:, :, c].astype(np.float32) * weight
+            else:
+                accum[y0:y1, x0:x1] += tile_result.astype(np.float32) * weight
+
+            w_sum[y0:y1, x0:x1] += weight
+
+        result = texture_uint8.copy()
+        valid = w_sum > 1e-6
+        if texture_uint8.ndim == 3:
+            for c in range(texture_uint8.shape[2]):
+                result[..., c][valid] = (accum[..., c][valid] / w_sum[valid]).astype(np.uint8)
+        else:
+            result[valid] = (accum[valid] / w_sum[valid]).astype(np.uint8)
+
+        return result
+
     @torch.no_grad()
     def uv_inpaint(self, texture, mask, vertex_inpaint=True, method="NS", return_float=False):
         """
@@ -1465,7 +1556,6 @@ class MeshRender:
             texture_np, mask = meshVerticeInpaint(texture_np, mask, vtx_pos, vtx_uv, pos_idx, uv_idx)
 
         if method == "NS":
-            texture_np = cv2.inpaint((texture_np * 255).astype(np.uint8), 255 - mask, 3, cv2.INPAINT_NS)
-            assert return_float == False
+            texture_np = self.parallel_tiles_inpainting(texture_np, mask)
 
         return texture_np

@@ -73,7 +73,7 @@ SAVE_DIR = "./save_dir"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 
-def run_texturing(glb_file, reference_image, uv_unwrap_method, texture_size, pbr, super_resolution, num_views):
+def run_texturing(glb_file, reference_image, uv_unwrap_method, texture_size, pbr, super_resolution, num_views, seed):
     save_folder = os.path.join(SAVE_DIR, str(uuid.uuid4()))
     os.makedirs(save_folder, exist_ok=True)
 
@@ -88,7 +88,8 @@ def run_texturing(glb_file, reference_image, uv_unwrap_method, texture_size, pbr
         pbr=pbr,
         upscale_model=super_resolution,
         num_views=num_views,
-        unwrap_method=uv_unwrap_method
+        unwrap_method=uv_unwrap_method,
+        seed=seed
     )
 
     glb_out_path = os.path.join(save_folder, "textured_mesh.glb")
@@ -104,20 +105,25 @@ def run_texturing(glb_file, reference_image, uv_unwrap_method, texture_size, pbr
 with gr.Blocks() as demo:
     gr.Markdown("## 🎨 Hunyuan 3D Texturing - GLB + Reference Image")
     with gr.Row():
-        with gr.Column():
-            glb_file = gr.File(label="Upload GLB", file_types=[".glb"], interactive=True, visible=True)
-            input_preview = gr.HTML(label="Preview", visible=False)
-        reference_image = gr.Image(type="filepath", label="Reference Image")
+        with gr.Column(scale=1):
+            with gr.Column():
+                glb_file = gr.File(label="Upload GLB", file_types=[".glb"], interactive=True)
+                input_preview = gr.HTML(label="Input Preview", visible=False)
+                reference_image = gr.Image(type="filepath", label="Reference Image")
 
-    with gr.Row():
-        uv_unwrap_method = gr.Radio(['xatlas', 'open3d', 'bpy'], label='UV Unwrap Method', value='xatlas')
-        texture_size = gr.Slider(1024, 8192, step=1024, value=4096, label="Texture Size")
-        pbr = gr.Checkbox(value=True, label="Enable PBR Texturing")
-        super_resolution = gr.Radio(["None", "NMKD", "Aura", "Flux", "Topaz"], value="NMKD", label="Super-Resolution")
-        num_views = gr.Slider(6, 24, step=2, value=6, label="Number of Views")
+            with gr.Column():
+                seed = gr.Number(value=-1, label="Seed (use -1 for random)", precision=0)
+                uv_unwrap_method = gr.Radio(['xatlas', 'open3d', 'bpy'], label='UV Unwrap Method', value='xatlas')
+                texture_size = gr.Slider(1024, 8192, step=1024, value=4096, label="Texture Size")
+                pbr = gr.Checkbox(value=True, label="Enable PBR Texturing")
+                super_resolution = gr.Radio(["None", "NMKD", "Aura", "Flux", "Topaz"],
+                                            value="NMKD", label="Super-Resolution")
+                num_views = gr.Slider(6, 24, step=2, value=6, label="Number of Views")
+                submit = gr.Button("Generate Texture")
 
-    submit = gr.Button("Generate Texture")
-    output_file = gr.File(label="Download Textured GLB")
+        with gr.Column(scale=1):  # RIGHT COLUMN: Output
+            output_file = gr.File(label="Download Textured GLB")
+            output_preview = gr.HTML(label="Output Preview")
 
     glb_file.change(
         fn=preview_uploaded_glb,
@@ -125,10 +131,8 @@ with gr.Blocks() as demo:
         outputs=[input_preview]
     )
 
-    output_preview = gr.HTML(label="Output Preview")
-
     submit.click(run_texturing,
-                 inputs=[glb_file, reference_image, uv_unwrap_method, texture_size, pbr, super_resolution, num_views],
+                 inputs=[glb_file, reference_image, uv_unwrap_method, texture_size, pbr, super_resolution, num_views, seed],
                  outputs=[output_file, output_preview])
 
 app = FastAPI()
