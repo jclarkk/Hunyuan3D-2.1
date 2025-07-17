@@ -67,7 +67,7 @@ def mesh_uv_wrap(mesh, padding=2, resolution=1024, max_iterations=4):
     return mesh
 
 
-def open3d_mesh_uv_wrap(mesh, gutter_size=2.5, max_stretch=0.1666666716337204, resolution=1024, use_fallback=True):
+def open3d_mesh_uv_wrap(mesh, gutter_size=6, max_stretch=0.5, resolution=1024, use_fallback=True):
     try:
         import open3d as o3d
         if isinstance(mesh, trimesh.Scene):
@@ -82,7 +82,7 @@ def open3d_mesh_uv_wrap(mesh, gutter_size=2.5, max_stretch=0.1666666716337204, r
 
         o3d_mesh.compute_uvatlas(
             size=resolution,
-            parallel_partitions=16,
+            parallel_partitions=4,
             gutter=gutter_size,
             max_stretch=max_stretch,
             nthreads=core_count

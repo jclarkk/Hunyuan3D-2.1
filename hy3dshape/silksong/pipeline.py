@@ -47,7 +47,7 @@ class MeshSilkSongPipeline:
         infer_dataloader = torch.utils.data.DataLoader(
             infer_dataset,
             batch_size=batch_size,
-            drop_last=True,
+            drop_last=False,
             shuffle=False,
             collate_fn=collate_fn_infer,
         )
