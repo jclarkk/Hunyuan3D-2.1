@@ -121,6 +121,12 @@ def apply_normalize(mesh):
     '''
     normalize mesh to [-1, 1]
     '''
+    # Clean up small faces, merge vertices
+    mesh.remove_degenerate_faces()
+    mesh.remove_duplicate_faces()
+    mesh.remove_unreferenced_vertices()
+    mesh.merge_vertices()
+
     bbox = mesh.bounds
     center = (bbox[1] + bbox[0]) / 2
     scale = (bbox[1] - bbox[0]).max()
