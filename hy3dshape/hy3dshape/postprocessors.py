@@ -152,10 +152,58 @@ class FaceReducer:
     def __call__(
             self,
             mesh: Union[pymeshlab.MeshSet, trimesh.Trimesh, Latent2MeshOutput, str],
-            max_facenum: int = 100000
+            max_facenum: int = 100000,
+            remesh_method: str = None,
     ) -> Union[pymeshlab.MeshSet, trimesh.Trimesh]:
+        target_vertex_count = int(max_facenum / 8)
+
         mesh = reduce_face_with_meshlib(mesh, max_facenum=max_facenum)
+
+        if remesh_method is not None and remesh_method == "InstantMeshes":
+            import pynanoinstantmeshes as PyNIM
+            import time
+
+            t0 = time.time()
+
+            vertices, faces = PyNIM.remesh(
+                np.array(mesh.vertices, dtype=np.float32),
+                np.array(mesh.faces, dtype=np.uint32),
+                target_vertex_count,
+                align_to_boundaries=True,
+                smooth_iter=8
+            )
+            vertices = vertices.astype(np.float32)
+            faces = self.quads_to_triangles(faces)
+            mesh = trimesh.Trimesh(vertices, faces)
+
+            t1 = time.time()
+            print(f"PyNanoInstantMeshes took {t1 - t0:.2f} seconds")
+        elif remesh_method is not None and remesh_method == "Silksong":
+            from silksong.pipeline import MeshSilkSongPipeline
+            import time
+
+            t0 = time.time()
+
+            pipeline = MeshSilkSongPipeline()
+            mesh = pipeline(mesh)
+
+            t1 = time.time()
+            print(f"MeshSilkSongPipeline took {t1 - t0:.2f} seconds")
+
         return mesh
+
+    @staticmethod
+    def quads_to_triangles(quads):
+        triangles = []
+
+        for quad in quads:
+            if len(quad) != 4:
+                raise ValueError("Each quad must have exactly 4 vertices.")
+
+            triangles.append([quad[0], quad[1], quad[2]])
+            triangles.append([quad[0], quad[2], quad[3]])
+
+        return np.array(triangles)
 
 
 class FloaterRemover:

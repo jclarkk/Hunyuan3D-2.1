@@ -62,6 +62,12 @@ torchmetrics==1.6.0
 
 pydantic==2.10.6
 
+# Silksong
+beartype==0.20.2
+ipdb==0.13.13
+kiui==0.2.16
+x-transformers==1.26.6
+
 timm
 pythreejs
 torchdiffeq

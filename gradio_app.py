@@ -227,7 +227,7 @@ def _gen_shape(
     octree_resolution=256,
     check_box_rembg=False,
     num_chunks=200000,
-    randomize_seed: bool = False,
+    randomize_seed: bool = False
 ):
     i23d_worker.to("cuda")
     print('Moved HunyuanDiT worker to GPU')
@@ -347,6 +347,7 @@ def generation_all(
     pbr: bool = False,
     super_resolution: str = 'NMKD',
     num_views: int = 6,
+    remesh_method: str = None
 ):
     start_time_0 = time.time()
     mesh, image, save_folder, stats, seed = _gen_shape(
@@ -377,7 +378,7 @@ def generation_all(
     # stats['time']['postprocessing'] = time.time() - tmp_time
 
     tmp_time = time.time()
-    mesh = face_reduce_worker(mesh)
+    mesh = face_reduce_worker(mesh, remesh_method=remesh_method)
 
     # path = export_mesh(mesh, save_folder, textured=False, type='glb')
     path = export_mesh(mesh, save_folder, textured=False, type='obj') # 这样操作也会 core dump
@@ -437,7 +438,7 @@ def shape_generation(
     octree_resolution=256,
     check_box_rembg=False,
     num_chunks=200000,
-    randomize_seed: bool = False,
+    randomize_seed: bool = False
 ):
     start_time_0 = time.time()
     mesh, image, save_folder, stats, seed = _gen_shape(
@@ -453,7 +454,7 @@ def shape_generation(
         octree_resolution=octree_resolution,
         check_box_rembg=check_box_rembg,
         num_chunks=num_chunks,
-        randomize_seed=randomize_seed,
+        randomize_seed=randomize_seed
     )
     stats['time']['total'] = time.time() - start_time_0
     mesh.metadata['extras'] = stats
@@ -586,6 +587,9 @@ Fast for very complex cases, Standard seldom use.',
                             cfg_scale = gr.Number(value=5.0, label='Guidance Scale', min_width=100)
                             num_chunks = gr.Slider(maximum=5000000, minimum=1000, value=8000,
                                                    label='Number of Chunks', min_width=100)
+                            remesh_method = gr.Radio(['InstantMeshes', 'Silksong', 'None'],
+                                                     label='Remesh Method',
+                                                     value='None')
                         with gr.Row():
                             texture_size = gr.Slider(minimum=1024, maximum=8192, step=1024, value=4096,
                                                      label='Texture Resolution')
@@ -649,7 +653,7 @@ Fast for very complex cases, Standard seldom use.',
                 octree_resolution,
                 check_box_rembg,
                 num_chunks,
-                randomize_seed,
+                randomize_seed
             ],
             outputs=[file_out, html_gen_mesh, stats, seed]
         ).then(
@@ -680,7 +684,8 @@ Fast for very complex cases, Standard seldom use.',
                 texture_size,
                 pbr,
                 super_resolution,
-                num_views
+                num_views,
+                remesh_method
             ],
             outputs=[file_out, file_out2, html_gen_mesh, stats, seed]
         ).then(
@@ -737,7 +742,7 @@ Fast for very complex cases, Standard seldom use.',
                 mesh = floater_remove_worker(mesh)
                 mesh = degenerate_face_remove_worker(mesh)
                 if reduce_face:
-                    mesh = face_reduce_worker(mesh, target_face_num)
+                    mesh = face_reduce_worker(mesh, target_face_num, remesh_method=remesh_method)
                 save_folder = gen_save_folder()
                 path = export_mesh(mesh, save_folder, textured=False, type=file_type)
 

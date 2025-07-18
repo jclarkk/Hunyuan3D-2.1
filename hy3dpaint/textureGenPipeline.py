@@ -160,7 +160,7 @@ class Hunyuan3DPaintPipeline:
 
         # Load mesh
         if isinstance(mesh_path, str):
-            mesh = trimesh.load(mesh_path)
+            mesh = trimesh.load(mesh_path, force='mesh')
         elif isinstance(mesh_path, trimesh.Trimesh):
             mesh = mesh_path
         else:
@@ -358,27 +358,37 @@ class Hunyuan3DPaintPipeline:
             enhance_images["mr"] = copy.deepcopy(multiviews["mr"])
 
         if upscale_model == 'Aura':
-            from .upscalers.pipelines import AuraSRUpscalerPipeline
+            from hy3dpaint.upscalers.pipelines import AuraSRUpscalerPipeline
             upscaler = AuraSRUpscalerPipeline.from_pretrained()
         elif upscale_model == 'NMKD':
-            from .upscalers.pipelines import NMKDSiaxUpscalerPipeline
+            from hy3dpaint.upscalers.pipelines import NMKDSiaxUpscalerPipeline
             upscaler = NMKDSiaxUpscalerPipeline.from_pretrained(self.config.device)
         elif upscale_model == 'Flux':
-            from .upscalers.pipelines import FluxUpscalerPipeline
+            from hy3dpaint.upscalers.pipelines import FluxUpscalerPipeline
             upscaler = FluxUpscalerPipeline.from_pretrained(self.config.device)
         elif upscale_model == 'Topaz':
-            from .upscalers.pipelines import TopazAPIUpscalerPipeline
+            from hy3dpaint.upscalers.pipelines import TopazAPIUpscalerPipeline
             upscaler = TopazAPIUpscalerPipeline()
         else:
             upscaler = None
 
         if upscaler is not None:
-            for i in range(len(enhance_images["albedo"])):
-                enhance_images["albedo"][i] = upscaler(enhance_images["albedo"][i])
-                if pbr:
-                    enhance_images["mr"][i] = upscaler(enhance_images["mr"][i])
+            resized_images = []
+            for i, img in enumerate(enhance_images["albedo"]):
+                if i < 6:
+                    resized_images.append(upscaler(img))
+                else:
+                    new_size = (img.width * 4, img.height * 4)
+                    resized_images.append(img.resize(new_size, resample=Image.LANCZOS))
+            enhance_images["albedo"] = resized_images
 
-            del upscaler
+            # Process mr (if available)
+            if pbr and "mr" in enhance_images:
+                resized_mr = []
+                for i, img in enumerate(enhance_images["mr"]):
+                    new_size = (img.width * 4, img.height * 4)
+                    resized_mr.append(img.resize(new_size, resample=Image.LANCZOS))
+                enhance_images["mr"] = resized_mr
 
         t1 = time.time()
         print(f"Upscaling took {t1 - t0:.2f} seconds")
