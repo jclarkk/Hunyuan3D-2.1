@@ -139,7 +139,7 @@ class TopazAPIUpscalerPipeline:
             if response.status_code == 200:
                 return Image.open(BytesIO(response.content))
 
-            elif response.status_code == 429:
+            elif response.status_code in [429, 500, 502, 503, 504]:
                 sleep_time = self.backoff_base ** attempt
                 time.sleep(sleep_time)
                 continue
