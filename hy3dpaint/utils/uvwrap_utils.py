@@ -31,6 +31,8 @@ def mesh_uv_wrap(mesh, padding=2, resolution=1024, max_iterations=4):
         # Try with open3d if the mesh is too large
         return open3d_mesh_uv_wrap(mesh, resolution=resolution, use_fallback=False)
 
+    print('Using xatlas for UV unwrapping')
+
     vertices = np.asarray(mesh.vertices, dtype=np.float32)
     faces = np.asarray(mesh.faces, dtype=np.uint32)
 
@@ -40,11 +42,8 @@ def mesh_uv_wrap(mesh, padding=2, resolution=1024, max_iterations=4):
     atlas.add_mesh(vertices, faces)
 
     chart_options = xatlas.ChartOptions()
-    if large_mesh_mode:
-        chart_options.max_iterations = 1
-        chart_options.max_cost = 3.0
-    else:
-        chart_options.max_iterations = max_iterations
+    chart_options.max_iterations = 1
+    chart_options.max_cost = 3.0
     chart_options.normal_seam_weight = 0.5
     chart_options.texture_seam_weight = 1.0
 

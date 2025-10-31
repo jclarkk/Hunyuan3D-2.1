@@ -62,14 +62,16 @@ torchmetrics==1.6.0
 
 pydantic==2.10.6
 
-# Silksong
+# Fastmesh
 beartype==0.20.2
-ipdb==0.13.13
-kiui==0.2.16
-x-transformers==1.26.6
+kornia==0.8.1
+plyfile==1.1.2
+pytorch-custom-utils==0.0.21
 
 timm
 pythreejs
 torchdiffeq
 deepspeed
 
+# GPU Inpainting
+simple-lama-inpainting==0.1.2

@@ -178,17 +178,17 @@ class FaceReducer:
 
             t1 = time.time()
             print(f"PyNanoInstantMeshes took {t1 - t0:.2f} seconds")
-        elif remesh_method is not None and remesh_method == "Silksong":
-            from silksong.pipeline import MeshSilkSongPipeline
+        elif remesh_method is not None and remesh_method == "FastMesh":
+            from fastmesh.pipeline import FastMeshPipeline
             import time
 
             t0 = time.time()
 
-            pipeline = MeshSilkSongPipeline()
+            pipeline = FastMeshPipeline()
             mesh = pipeline(mesh)
 
             t1 = time.time()
-            print(f"MeshSilkSongPipeline took {t1 - t0:.2f} seconds")
+            print(f"FastMeshPipeline took {t1 - t0:.2f} seconds")
 
         return mesh
 

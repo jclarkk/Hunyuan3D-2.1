@@ -438,7 +438,8 @@ def shape_generation(
     octree_resolution=256,
     check_box_rembg=False,
     num_chunks=200000,
-    randomize_seed: bool = False
+    randomize_seed: bool = False,
+    remesh_method: str = None
 ):
     start_time_0 = time.time()
     mesh, image, save_folder, stats, seed = _gen_shape(
@@ -458,6 +459,8 @@ def shape_generation(
     )
     stats['time']['total'] = time.time() - start_time_0
     mesh.metadata['extras'] = stats
+
+    mesh = face_reduce_worker(mesh, remesh_method=remesh_method)
 
     path = export_mesh(mesh, save_folder, textured=False)
     model_viewer_html = build_model_viewer_html(save_folder, height=HTML_HEIGHT, width=HTML_WIDTH)
@@ -587,7 +590,7 @@ Fast for very complex cases, Standard seldom use.',
                             cfg_scale = gr.Number(value=5.0, label='Guidance Scale', min_width=100)
                             num_chunks = gr.Slider(maximum=5000000, minimum=1000, value=8000,
                                                    label='Number of Chunks', min_width=100)
-                            remesh_method = gr.Radio(['InstantMeshes', 'Silksong', 'None'],
+                            remesh_method = gr.Radio(['InstantMeshes', 'FastMesh', 'None'],
                                                      label='Remesh Method',
                                                      value='None')
                         with gr.Row():
@@ -653,7 +656,8 @@ Fast for very complex cases, Standard seldom use.',
                 octree_resolution,
                 check_box_rembg,
                 num_chunks,
-                randomize_seed
+                randomize_seed,
+                remesh_method
             ],
             outputs=[file_out, html_gen_mesh, stats, seed]
         ).then(
@@ -888,17 +892,19 @@ if __name__ == '__main__':
     face_reduce_worker = FaceReducer()
 
     # https://discuss.huggingface.co/t/how-to-serve-an-html-file/33921/2
-    # create a FastAPI app
-    app = FastAPI()
-    
     # create a static directory to store the static files
     static_dir = Path(SAVE_DIR).absolute()
     static_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static")
     shutil.copytree('./assets/env_maps', os.path.join(static_dir, 'env_maps'), dirs_exist_ok=True)
 
     if args.low_vram_mode:
         torch.cuda.empty_cache()
     demo = build_app()
-    app = gr.mount_gradio_app(app, demo, path="/")
-    uvicorn.run(app, host=args.host, port=args.port)
+    if os.getenv("USE_GRADIO_SHARE", "0") == "1":
+        demo.launch(server_name="0.0.0.0", server_port=8080, share=True)
+    else:
+        # create a FastAPI app
+        app = FastAPI()
+        app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static")
+        app = gr.mount_gradio_app(app, demo, path="/")
+        uvicorn.run(app, host="0.0.0.0", port=8080, proxy_headers=True, forwarded_allow_ips="*")

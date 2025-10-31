@@ -15,29 +15,29 @@ from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
 
 
 def build_model_viewer_html(glb_path: str, height: int = 480, textured=False) -> str:
-    rel_path = os.path.relpath(glb_path, SAVE_DIR)
-    html_file = os.path.splitext(glb_path)[0] + (".textured.html" if textured else ".preview.html")
+    template_name = './assets/modelviewer-template.html'
+    out_html = os.path.join('current_mesh.html')
 
-    with open(html_file, "w") as f:
-        f.write(f"""
-        <html>
-        <head>
-            <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-        </head>
-        <body style="margin:0;">
-            <model-viewer 
-                src="/static/{rel_path}" 
-                camera-controls 
-                auto-rotate 
-                background-color="#ffffff"
-                style="height:{height}px; width:100%;">
-            </model-viewer>
-        </body>
-        </html>
-        """)
+    # read template
+    with open(os.path.join(template_name), 'r', encoding='utf-8') as f:
+        html = f.read()
 
-    rel_html = os.path.relpath(html_file, SAVE_DIR)
-    return f'<iframe src="/static/{rel_html}" height="{height}" width="100%" frameborder="0"></iframe>'
+    # IMPORTANT: use file= paths (works locally, with Runpod proxy, and with share=True)
+    # your template should reference #src# where the model URL goes
+    html = html.replace('#src#', f'file={glb_path}')
+
+    # if your template references env maps or other assets, also replace those to file=ABS_PATH
+    # e.g.: html = html.replace('#env_map#', f'file={os.path.abspath("assets/env_maps/studio.hdr")}')
+
+    with open(out_html, 'w', encoding='utf-8') as f:
+        f.write(html)
+
+    # Point iframe to the HTML file via Gradio's file server
+    return f"""
+      <div style='height:{height}px;width:100%;'>
+        <iframe src="file={out_html}" height="{height}" width="100%" frameborder="0"></iframe>
+      </div>
+    """
 
 
 def preview_uploaded_glb(glb_file):
@@ -132,11 +132,14 @@ with gr.Blocks() as demo:
     )
 
     submit.click(run_texturing,
-                 inputs=[glb_file, reference_image, uv_unwrap_method, texture_size, pbr, super_resolution, num_views, seed],
+                 inputs=[glb_file, reference_image, uv_unwrap_method, texture_size, pbr, super_resolution, num_views,
+                         seed],
                  outputs=[output_file, output_preview])
 
-app = FastAPI()
-app.mount("/static", StaticFiles(directory=SAVE_DIR, html=True), name="static")
-app = gr.mount_gradio_app(app, demo, path="/")
-
-uvicorn.run(app, host=args.host, port=args.port)
+if os.getenv("USE_GRADIO_SHARE", "0") == "1":
+    demo.launch(server_name="0.0.0.0", server_port=8080, share=True)
+else:
+    app = FastAPI()
+    app.mount("/static", StaticFiles(directory=SAVE_DIR, html=True), name="static")
+    app = gr.mount_gradio_app(app, demo, path="/")
+    uvicorn.run(app, host="0.0.0.0", port=8080, proxy_headers=True, forwarded_allow_ips="*")
