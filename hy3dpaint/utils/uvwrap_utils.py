@@ -8,6 +8,7 @@
 import numpy as np
 import os
 import torch
+import torch.nn.functional as F
 import trimesh
 
 
@@ -18,7 +19,7 @@ import trimesh
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
 
 
-def sf_mesh_uv_wrap(mesh, island_padding=0.02, device='cuda'):
+def sf_mesh_uv_wrap(mesh, island_padding=0.02, device='cuda', y_flip=False):
     try:
         from uv_unwrapper import Unwrapper
     except ImportError:
@@ -68,7 +69,7 @@ def sf_mesh_uv_wrap(mesh, island_padding=0.02, device='cuda'):
 
     # build new trimesh
     new_mesh = trimesh.Trimesh(vertices=new_vertices, faces=new_faces, process=False)
-    new_mesh.visual = TextureVisuals(uv=new_uvs)
+    new_mesh.visual = trimesh.visual.TextureVisuals(uv=new_uvs)
     # cache normals (trimesh will compute lazily otherwise)
     new_mesh._vertex_normals = new_vn
 
