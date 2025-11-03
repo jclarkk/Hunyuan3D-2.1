@@ -1560,14 +1560,23 @@ class MeshRender:
             print('Using CPU Navier-Stokes inpainting method')
             texture_np = self.parallel_tiles_inpainting(texture_np, mask)
         elif method == "GPU":
-            from simple_lama_inpainting import inpaint
+            from simple_lama_inpainting import SimpleLama
+
+            simple_lama = SimpleLama()
 
             print('Using GPU inpainting method')
 
+            # Convert to PIL for SimpleLama
             texture_pil = Image.fromarray((texture_np * 255).astype(np.uint8))
-            mask_pil = Image.fromarray(mask)
-            inpainted_pil = inpaint(texture_pil, mask_pil)
+            mask_pil = Image.fromarray(mask_np).convert('L')
+
+            # Inpaint with LaMa
+            inpainted_pil = simple_lama(texture_pil, mask_pil)
+
+            # Convert back
             texture_np = np.array(inpainted_pil) / 255.0
+        else:
+            raise ValueError(f"Unknown inpainting method: {method}")
 
         if return_float:
             return texture_np.astype(np.float32)

@@ -17,6 +17,63 @@ import trimesh
 import numpy as np
 
 
+def sf_mesh_uv_wrap(mesh, island_padding=0.02):
+    try:
+        from uv_unwrapper import Unwrapper
+    except ImportError:
+        import logging
+
+        logging.warning(
+            "Could not import uv_unwrapper. Please install it via `pip install hy3dpaint/utils/uv_unwrapper/`"
+        )
+        # Exit early to avoid further errors
+        raise ImportError("uv_unwrapper not found")
+
+    if not mesh.is_watertight or not mesh.faces.shape[1] == 3:
+        mesh = mesh.triangulate(copy=True)
+
+    v_pos = torch.from_numpy(np.asarray(mesh.vertices, dtype=np.float32)).to(device)
+    t_pos_idx = torch.from_numpy(np.asarray(mesh.faces, dtype=np.int64)).to(device)
+
+    # vertex normals (torch; same as your Mesh impl)
+    v_nrm = _torch_vertex_normals(v_pos, t_pos_idx)
+
+    # unwrap
+    unwrapper = Unwrapper()
+    with torch.no_grad():
+        uv, indices = unwrapper(v_pos, v_nrm, t_pos_idx, float(island_padding))
+        # uv:       [Nv, 2]   (per original vertex)
+        # indices:  [Nf, 3]   (per-corner -> which vertex's UV to sample)
+
+        # duplicate vertices at seams: per-corner -> per-vertex
+        # equivalent to your unwrap_uv() duplication logic
+        individual_vertices = v_pos[t_pos_idx].reshape(-1, 3)  # [Nf*3, 3]
+        individual_faces = torch.arange(
+            individual_vertices.shape[0], device=t_pos_idx.device, dtype=t_pos_idx.dtype
+        ).reshape(-1, 3)  # [Nf, 3]
+        uv_flat = uv[indices].reshape(-1, 2)  # [Nf*3, 2]
+
+        if y_flip:
+            uv_flat[:, 1] = 1.0 - uv_flat[:, 1]
+
+        # recompute normals for duplicated vertices (optional but handy)
+        v_nrm_dup = _torch_vertex_normals(individual_vertices, individual_faces)
+
+    # back to numpy
+    new_vertices = individual_vertices.detach().cpu().numpy().astype(np.float32)
+    new_faces = individual_faces.detach().cpu().numpy().astype(np.int64)
+    new_uvs = uv_flat.detach().cpu().numpy().astype(np.float32)
+    new_vn = v_nrm_dup.detach().cpu().numpy().astype(np.float32)
+
+    # build new trimesh
+    new_mesh = trimesh.Trimesh(vertices=new_vertices, faces=new_faces, process=False)
+    new_mesh.visual = TextureVisuals(uv=new_uvs)
+    # cache normals (trimesh will compute lazily otherwise)
+    new_mesh._vertex_normals = new_vn
+
+    return new_mesh
+
+
 def mesh_uv_wrap(mesh, padding=2, resolution=1024, max_iterations=4):
     import xatlas
 

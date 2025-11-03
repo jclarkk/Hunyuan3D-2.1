@@ -113,7 +113,7 @@ with gr.Blocks() as demo:
 
             with gr.Column():
                 seed = gr.Number(value=-1, label="Seed (use -1 for random)", precision=0)
-                uv_unwrap_method = gr.Radio(['xatlas', 'open3d', 'bpy'], label='UV Unwrap Method', value='xatlas')
+                uv_unwrap_method = gr.Radio(['xatlas', 'open3d', 'bpy', 'sf'], label='UV Unwrap Method', value='xatlas')
                 texture_size = gr.Slider(1024, 8192, step=1024, value=4096, label="Texture Size")
                 pbr = gr.Checkbox(value=True, label="Enable PBR Texturing")
                 super_resolution = gr.Radio(["None", "NMKD", "Aura", "Flux", "Topaz"],
