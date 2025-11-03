@@ -1566,6 +1566,11 @@ class MeshRender:
 
             print('Using GPU inpainting method')
 
+            if isinstance(mask, torch.Tensor):
+                mask_np = (mask.squeeze(-1).cpu().numpy() * 255).astype(np.uint8)
+            else:
+                mask_np = mask
+
             # Convert to PIL for SimpleLama
             texture_pil = Image.fromarray((texture_np * 255).astype(np.uint8))
             mask_pil = Image.fromarray(mask_np).convert('L')
