@@ -41,6 +41,12 @@ try:
 except:
     print("InPaint Function CAN NOT BE Imported!!!")
 
+try:
+    from simple_lama_inpainting import SimpleLama
+
+    simple_lama = SimpleLama()  # Loads model (GPU if available)
+except:
+    print('Simple Lama Inpainting CAN NOT BE Imported!!!')
 
 class RenderMode(Enum):
     """Rendering mode enumeration."""
@@ -1440,18 +1446,11 @@ class MeshRender:
     @staticmethod
     def parallel_tiles_inpainting(texture_np: np.ndarray,
                                   mask: np.ndarray,
-                                  tile_size: int = 256,
-                                  overlap: int = 32,
-                                  method: int = cv2.INPAINT_NS,
-                                  radius: int = 3) -> np.ndarray:
-        """
-        Split image into overlapping tiles and process in parallel.
-        This maintains quality while speeding up processing significantly.
-        """
+                                  tile_size: int = 1024,  # Larger for LaMa efficiency
+                                  overlap: int = 64) -> np.ndarray:
         h, w = texture_np.shape[:2]
         texture_uint8 = (texture_np * 255).astype(np.uint8)
-        mask_inv = 255 - mask
-
+        mask_inv = 255 - mask  # Assuming mask is 255=keep, 0=inpaint; mask_inv is 255=inpaint
         accum = np.zeros_like(texture_uint8, dtype=np.float32)
         w_sum = np.zeros((h, w), dtype=np.float32)
 
@@ -1467,25 +1466,26 @@ class MeshRender:
             tile_mask = mask_inv[y0:y1, x0:x1]
             if np.sum(tile_mask) == 0:
                 return None
-
-            pad = radius * 2
+            pad = overlap // 2  # Use overlap for padding to give LaMa context
             xs, ys = max(0, x0 - pad), max(0, y0 - pad)
             xe, ye = min(w, x1 + pad), min(h, y1 + pad)
-
             tile_img = texture_uint8[ys:ye, xs:xe]
             tile_mask_pad = mask_inv[ys:ye, xs:xe]
 
-            inpainted = cv2.inpaint(tile_img, tile_mask_pad, radius, method)
+            # Use SimpleLama
+            texture_pil = Image.fromarray(tile_img)
+            mask_pil = Image.fromarray(tile_mask_pad).convert('L')  # 255=inpaint regions
+            inpainted_pil = simple_lama(texture_pil, mask_pil)
+            inpainted = np.array(inpainted_pil)
 
             offset_y = y0 - ys
             offset_x = x0 - xs
             center = inpainted[offset_y:offset_y + (y1 - y0), offset_x:offset_x + (x1 - x0)]
-
             return (x0, y0, x1, y1, center)
 
-        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor  # Threads for GPU sharing
         import multiprocessing as mp
-        with ThreadPoolExecutor(max_workers=mp.cpu_count()) as executor:
+        with ThreadPoolExecutor(max_workers=mp.cpu_count() // 2) as executor:  # Fewer workers to avoid GPU overload
             results = list(executor.map(process_tile, tiles))
 
         for res in results:
@@ -1495,24 +1495,19 @@ class MeshRender:
             th, tw = tile_result.shape[:2]
             fade = overlap // 2
             fade = min(fade, th // 2, tw // 2)
-
             weight = np.ones((th, tw), dtype=np.float32)
-
             if fade > 0:
                 wx = np.linspace(1, 0, fade + 2, dtype=np.float32)[1:-1]
                 wy = wx.copy()
-
                 weight[:fade, :] *= wy[::-1, None]
                 weight[-fade:, :] *= wy[:, None]
                 weight[:, :fade] *= wx[None, ::-1]
                 weight[:, -fade:] *= wx[None, :]
-
             if texture_uint8.ndim == 3:
                 for c in range(texture_uint8.shape[2]):
                     accum[y0:y1, x0:x1, c] += tile_result[:, :, c].astype(np.float32) * weight
             else:
                 accum[y0:y1, x0:x1] += tile_result.astype(np.float32) * weight
-
             w_sum[y0:y1, x0:x1] += weight
 
         result = texture_uint8.copy()
@@ -1522,8 +1517,7 @@ class MeshRender:
                 result[..., c][valid] = (accum[..., c][valid] / w_sum[valid]).astype(np.uint8)
         else:
             result[valid] = (accum[valid] / w_sum[valid]).astype(np.uint8)
-
-        return result
+        return result / 255.0  # Return float for consistency
 
     @torch.no_grad()
     def uv_inpaint(self, texture, mask, vertex_inpaint=True, method="GPU", return_float=False):
@@ -1556,32 +1550,12 @@ class MeshRender:
             vtx_pos, pos_idx, vtx_uv, uv_idx = self.get_mesh()
             texture_np, mask = meshVerticeInpaint(texture_np, mask, vtx_pos, vtx_uv, pos_idx, uv_idx)
 
-        if method == "NS":
-            print('Using CPU Navier-Stokes inpainting method')
-            texture_np = self.parallel_tiles_inpainting(texture_np, mask)
-        elif method == "GPU":
-            from simple_lama_inpainting import SimpleLama
-
-            simple_lama = SimpleLama()
-
-            print('Using GPU inpainting method')
-
-            if isinstance(mask, torch.Tensor):
-                mask_np = (mask.squeeze(-1).cpu().numpy() * 255).astype(np.uint8)
-            else:
-                mask_np = mask
-
-            # Convert to PIL for SimpleLama
-            texture_pil = Image.fromarray((texture_np * 255).astype(np.uint8))
-            mask_pil = Image.fromarray(mask_np).convert('L')
-
-            # Inpaint with LaMa
-            inpainted_pil = simple_lama(texture_pil, mask_pil)
-
-            # Convert back
-            texture_np = np.array(inpainted_pil) / 255.0
+        if isinstance(mask, torch.Tensor):
+            mask_np = (mask.squeeze(-1).cpu().numpy() * 255).astype(np.uint8)
         else:
-            raise ValueError(f"Unknown inpainting method: {method}")
+            mask_np = mask
+
+        texture_np = self.parallel_tiles_inpainting(texture_np, mask_np)
 
         if return_float:
             return texture_np.astype(np.float32)
