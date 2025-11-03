@@ -5,7 +5,11 @@
 # Users must comply with all terms and conditions of original licenses of these third-party
 # components and must ensure that the usage of the third party components adheres to
 # all relevant laws and regulations.
+import numpy as np
 import os
+import torch
+import trimesh
+
 
 # For avoidance of doubts, Hunyuan 3D means the large language models and
 # their software and algorithms, including trained model weights, parameters (including
@@ -13,11 +17,8 @@ import os
 # fine-tuning enabling code and other elements of the foregoing made publicly available
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
 
-import trimesh
-import numpy as np
 
-
-def sf_mesh_uv_wrap(mesh, island_padding=0.02):
+def sf_mesh_uv_wrap(mesh, island_padding=0.02, device='cuda'):
     try:
         from uv_unwrapper import Unwrapper
     except ImportError:
@@ -306,3 +307,25 @@ def ensure_triangles(tm: trimesh.Trimesh) -> trimesh.Trimesh:
             new_tm.visual.material = mat
 
     return new_tm
+
+
+def _torch_vertex_normals(v_pos: torch.Tensor, faces: torch.Tensor) -> torch.Tensor:
+    """
+    Compute per-vertex normals in torch (same math as in your Mesh class).
+    v_pos:  [Nv, 3]
+    faces:  [Nf, 3]
+    """
+    i0, i1, i2 = faces[:, 0], faces[:, 1], faces[:, 2]
+    v0, v1, v2 = v_pos[i0], v_pos[i1], v_pos[i2]
+
+    face_normals = torch.cross(v1 - v0, v2 - v0, dim=-1)
+    v_nrm = torch.zeros_like(v_pos)
+    v_nrm.scatter_add_(0, i0[:, None].expand(-1, 3), face_normals)
+    v_nrm.scatter_add_(0, i1[:, None].expand(-1, 3), face_normals)
+    v_nrm.scatter_add_(0, i2[:, None].expand(-1, 3), face_normals)
+
+    mask = (v_nrm * v_nrm).sum(dim=1) <= 1e-20
+    if mask.any():
+        v_nrm[mask] = v_nrm.new_tensor([0.0, 0.0, 1.0])
+    v_nrm = F.normalize(v_nrm, dim=1)
+    return v_nrm
