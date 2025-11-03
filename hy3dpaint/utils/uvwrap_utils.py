@@ -30,7 +30,7 @@ def sf_mesh_uv_wrap(mesh, island_padding=0.02):
         raise ImportError("uv_unwrapper not found")
 
     if not mesh.is_watertight or not mesh.faces.shape[1] == 3:
-        mesh = mesh.triangulate(copy=True)
+        mesh = ensure_triangles(mesh)
 
     v_pos = torch.from_numpy(np.asarray(mesh.vertices, dtype=np.float32)).to(device)
     t_pos_idx = torch.from_numpy(np.asarray(mesh.faces, dtype=np.int64)).to(device)
@@ -266,3 +266,43 @@ def bpy_unwrap_mesh(mesh):
     bpy.data.meshes.remove(bpy_mesh)
 
     return mesh
+
+
+def ensure_triangles(tm: trimesh.Trimesh) -> trimesh.Trimesh:
+    """
+    Return a triangle-only Trimesh.
+    - If already triangles: returns a copy with process=False (no topology edits).
+    - If faces are quads/ngons: fan-triangulates each polygon [v0, v1, v2, ...] into
+      triangles (v0, v1, v2), (v0, v2, v3), ...
+    Preserves visual.uv and material when they are per-vertex.
+    """
+    V = np.asarray(tm.vertices, dtype=np.float64)
+    F = np.asarray(tm.faces)
+
+    # If faces are already triangles, just copy (and keep uv/material)
+    if F.ndim == 2 and F.shape[1] == 3:
+        new_tm = trimesh.Trimesh(vertices=V.copy(), faces=F.copy(), process=False)
+    else:
+        # Some formats pad with -1: strip them
+        tris = []
+        for face in F:
+            idx = [int(i) for i in face if i != -1]  # drop padding
+            if len(idx) < 3:
+                continue
+            # fan triangulation: (v0, v1, v2), (v0, v2, v3), ...
+            for i in range(1, len(idx) - 1):
+                tris.append([idx[0], idx[i], idx[i + 1]])
+        if not tris:
+            raise ValueError("Mesh has no valid faces to triangulate.")
+        tris = np.asarray(tris, dtype=np.int64)
+        new_tm = trimesh.Trimesh(vertices=V.copy(), faces=tris, process=False)
+
+    # Preserve per-vertex UVs/material if present
+    uv = getattr(getattr(tm, "visual", None), "uv", None)
+    if uv is not None and len(uv) == len(V):
+        new_tm.visual = trimesh.visual.TextureVisuals(uv=np.asarray(uv))
+        mat = getattr(tm.visual, "material", None)
+        if mat is not None:
+            new_tm.visual.material = mat
+
+    return new_tm
