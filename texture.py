@@ -27,8 +27,8 @@ def run(args):
     if args.texture_size not in [1024, 2048, 3072, 4096, 6144, 8192]:
         raise ValueError("Texture size must be one of 1024, 2048, 3072, 4096, 6144, 8192")
 
-    if args.unwrap_method not in ['xatlas', 'open3d', 'bpy']:
-        raise ValueError("Unwrap method must be either 'xatlas', 'open3d' or 'bpy'")
+    if args.unwrap_method not in ['xatlas', 'open3d', 'bpy', 'sf']:
+        raise ValueError("Unwrap method must be either 'xatlas', 'open3d' or 'bpy' or 'sf'")
 
     t0 = time.time()
     # Load mesh

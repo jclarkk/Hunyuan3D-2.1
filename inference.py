@@ -19,8 +19,8 @@ def run(args):
     if args.face_count > 100000:
         raise ValueError("Face count must be less than or equal to 100000")
 
-    if args.unwrap_method not in ['xatlas', 'open3d', 'bpy']:
-        raise ValueError("Unwrap method must be either 'xatlas', 'open3d' or 'bpy'")
+    if args.unwrap_method not in ['xatlas', 'open3d', 'bpy', 'sf']:
+        raise ValueError("Unwrap method must be either 'xatlas', 'open3d' or 'bpy' or 'sf'")
 
     t0 = time.time()
 
