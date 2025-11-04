@@ -1520,7 +1520,7 @@ class MeshRender:
         return result / 255.0  # Return float for consistency
 
     @torch.no_grad()
-    def uv_inpaint(self, texture, mask, vertex_inpaint=True, method="GPU", return_float=False):
+    def uv_inpaint(self, texture, mask, vertex_inpaint=True, return_float=False):
         """
         Inpaint missing regions in UV texture using mesh-aware and traditional methods.
 
@@ -1528,7 +1528,6 @@ class MeshRender:
             texture: Input texture as tensor, numpy array, or PIL Image
             mask: Binary mask indicating regions to inpaint (1 = keep, 0 = inpaint)
             vertex_inpaint: Whether to use mesh vertex connectivity for inpainting
-            method: Inpainting method ("NS" for Navier-Stokes)
             return_float: Whether to return float values (False returns uint8)
 
         Returns:
@@ -1555,6 +1554,7 @@ class MeshRender:
         else:
             mask_np = mask
 
+        print('Using LaMa texture inpainting method')
         texture_np = self.parallel_tiles_inpainting(texture_np, mask_np)
 
         if return_float:

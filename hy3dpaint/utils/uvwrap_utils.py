@@ -24,11 +24,9 @@ def sf_mesh_uv_wrap(mesh, island_padding=0.02, device='cuda', y_flip=False):
         from uv_unwrapper import Unwrapper
     except ImportError:
         import logging
-
         logging.warning(
             "Could not import uv_unwrapper. Please install it via `pip install hy3dpaint/utils/uv_unwrapper/`"
         )
-        # Exit early to avoid further errors
         raise ImportError("uv_unwrapper not found")
 
     if not mesh.is_watertight or not mesh.faces.shape[1] == 3:
@@ -36,42 +34,35 @@ def sf_mesh_uv_wrap(mesh, island_padding=0.02, device='cuda', y_flip=False):
 
     v_pos = torch.from_numpy(np.asarray(mesh.vertices, dtype=np.float32)).to(device)
     t_pos_idx = torch.from_numpy(np.asarray(mesh.faces, dtype=np.int64)).to(device)
-
-    # vertex normals (torch; same as your Mesh impl)
     v_nrm = _torch_vertex_normals(v_pos, t_pos_idx)
 
-    # unwrap
     unwrapper = Unwrapper()
+
     with torch.no_grad():
         uv, indices = unwrapper(v_pos, v_nrm, t_pos_idx, float(island_padding))
-        # uv:       [Nv, 2]   (per original vertex)
-        # indices:  [Nf, 3]   (per-corner -> which vertex's UV to sample)
-
-        # duplicate vertices at seams: per-corner -> per-vertex
-        # equivalent to your unwrap_uv() duplication logic
-        individual_vertices = v_pos[t_pos_idx].reshape(-1, 3)  # [Nf*3, 3]
-        individual_faces = torch.arange(
-            individual_vertices.shape[0], device=t_pos_idx.device, dtype=t_pos_idx.dtype
-        ).reshape(-1, 3)  # [Nf, 3]
-        uv_flat = uv[indices].reshape(-1, 2)  # [Nf*3, 2]
-
+        # uv: [Nuv, 2] unique UVs
+        # indices: [Nf, 3] per-corner indices into uv
+        t_pos_idx_flat = t_pos_idx.reshape(-1)
+        indices_flat = indices.reshape(-1)
+        combined = torch.stack([t_pos_idx_flat, indices_flat], dim=1)  # [Nf*3, 2]
+        unique_combined, new_indices_flat = torch.unique(combined, return_inverse=True, dim=0)
+        new_vertices = v_pos[unique_combined[:, 0]]
+        new_uvs = uv[unique_combined[:, 1]]
         if y_flip:
-            uv_flat[:, 1] = 1.0 - uv_flat[:, 1]
+            new_uvs[:, 1] = 1.0 - new_uvs[:, 1]
+        new_faces = new_indices_flat.reshape(-1, 3)
+        v_nrm_dup = _torch_vertex_normals(new_vertices, new_faces)
 
-        # recompute normals for duplicated vertices (optional but handy)
-        v_nrm_dup = _torch_vertex_normals(individual_vertices, individual_faces)
+    # To numpy
+    new_vertices_np = new_vertices.detach().cpu().numpy().astype(np.float32)
+    new_faces_np = new_faces.detach().cpu().numpy().astype(np.int64)
+    new_uvs_np = new_uvs.detach().cpu().numpy().astype(np.float32)
+    new_vn_np = v_nrm_dup.detach().cpu().numpy().astype(np.float32)
 
-    # back to numpy
-    new_vertices = individual_vertices.detach().cpu().numpy().astype(np.float32)
-    new_faces = individual_faces.detach().cpu().numpy().astype(np.int64)
-    new_uvs = uv_flat.detach().cpu().numpy().astype(np.float32)
-    new_vn = v_nrm_dup.detach().cpu().numpy().astype(np.float32)
-
-    # build new trimesh
-    new_mesh = trimesh.Trimesh(vertices=new_vertices, faces=new_faces, process=False)
-    new_mesh.visual = trimesh.visual.TextureVisuals(uv=new_uvs)
-    # cache normals (trimesh will compute lazily otherwise)
-    new_mesh._vertex_normals = new_vn
+    # Build new trimesh
+    new_mesh = trimesh.Trimesh(vertices=new_vertices_np, faces=new_faces_np, process=False)
+    new_mesh.visual = trimesh.visual.TextureVisuals(uv=new_uvs_np)
+    new_mesh._vertex_normals = new_vn_np
 
     return new_mesh
 

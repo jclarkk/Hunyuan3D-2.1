@@ -253,6 +253,9 @@ class Hunyuan3DPaintPipeline:
                     use_mesh_renderer=False
                 )
 
+            t1 = time.time()
+            print(f"Multiview generation took {t1 - t0:.2f} seconds")
+
             if pbr:
                 print("Preparing for PBR generation...")
 
@@ -349,9 +352,6 @@ class Hunyuan3DPaintPipeline:
 
         else:
             raise ValueError("Unsupported multiview model path: {}".format(self.config.multiview_pretrained_path))
-
-        t1 = time.time()
-        print(f"Multiview generation took {t1 - t0:.2f} seconds")
 
         t0 = time.time()
         ###########  Enhance  ##########
