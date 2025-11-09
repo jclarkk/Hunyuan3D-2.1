@@ -76,46 +76,47 @@ class Unwrapper(nn.Module):
         face_normal_axis = (face_normal[:, None] * axis[None]).sum(-1)
         index = face_normal_axis.argmax(-1)
 
-        max_axis, uc, vc = (
-            torch.ones_like(abs_x),
-            torch.zeros_like(tri_stack[..., :1]),
-            torch.zeros_like(tri_stack[..., :1]),
-        )
+        max_axis = torch.ones_like(face_normal[:, 0])  # [Nf], per face
+        uc = torch.zeros_like(tri_stack[..., :1])  # [Nf, 3, 1]
+        vc = torch.zeros_like(tri_stack[..., :1])  # [Nf, 3, 1]
+
+        # Set max_axis to max abs coord per face for the major axis
         mask_pos_x = index == 0
-        max_axis[mask_pos_x] = abs_x[mask_pos_x]
-        uc[mask_pos_x] = tri_stack[mask_pos_x][..., 1:2]
-        vc[mask_pos_x] = -tri_stack[mask_pos_x][..., -1:]
+        max_axis[mask_pos_x] = abs_x[mask_pos_x].max(-1)[0]
+        uc[mask_pos_x] = tri_stack[mask_pos_x][..., 1:2]  # y
+        vc[mask_pos_x] = -tri_stack[mask_pos_x][..., -1:]  # -z
 
         mask_neg_x = index == 1
-        max_axis[mask_neg_x] = abs_x[mask_neg_x]
-        uc[mask_neg_x] = tri_stack[mask_neg_x][..., 1:2]
-        vc[mask_neg_x] = -tri_stack[mask_neg_x][..., -1:]
+        max_axis[mask_neg_x] = abs_x[mask_neg_x].max(-1)[0]
+        uc[mask_neg_x] = tri_stack[mask_neg_x][..., 1:2]  # y
+        vc[mask_neg_x] = -tri_stack[mask_neg_x][..., -1:]  # -z
 
         mask_pos_y = index == 2
-        max_axis[mask_pos_y] = abs_y[mask_pos_y]
-        uc[mask_pos_y] = tri_stack[mask_pos_y][..., 0:1]
-        vc[mask_pos_y] = -tri_stack[mask_pos_y][..., -1:]
+        max_axis[mask_pos_y] = abs_y[mask_pos_y].max(-1)[0]
+        uc[mask_pos_y] = tri_stack[mask_pos_y][..., 0:1]  # x
+        vc[mask_pos_y] = -tri_stack[mask_pos_y][..., -1:]  # -z
 
         mask_neg_y = index == 3
-        max_axis[mask_neg_y] = abs_y[mask_neg_y]
-        uc[mask_neg_y] = tri_stack[mask_neg_y][..., 0:1]
-        vc[mask_neg_y] = -tri_stack[mask_neg_y][..., -1:]
+        max_axis[mask_neg_y] = abs_y[mask_neg_y].max(-1)[0]
+        uc[mask_neg_y] = tri_stack[mask_neg_y][..., 0:1]  # x
+        vc[mask_neg_y] = -tri_stack[mask_neg_y][..., -1:]  # -z
 
         mask_pos_z = index == 4
-        max_axis[mask_pos_z] = abs_z[mask_pos_z]
-        uc[mask_pos_z] = tri_stack[mask_pos_z][..., 0:1]
-        vc[mask_pos_z] = tri_stack[mask_pos_z][..., 1:2]
+        max_axis[mask_pos_z] = abs_z[mask_pos_z].max(-1)[0]
+        uc[mask_pos_z] = tri_stack[mask_pos_z][..., 0:1]  # x
+        vc[mask_pos_z] = tri_stack[mask_pos_z][..., 1:2]  # y
 
         mask_neg_z = index == 5
-        max_axis[mask_neg_z] = abs_z[mask_neg_z]
-        uc[mask_neg_z] = tri_stack[mask_neg_z][..., 0:1]
-        vc[mask_neg_z] = -tri_stack[mask_neg_z][..., 1:2]
+        max_axis[mask_neg_z] = abs_z[mask_neg_z].max(-1)[0]
+        uc[mask_neg_z] = tri_stack[mask_neg_z][..., 0:1]  # x
+        vc[mask_neg_z] = -tri_stack[mask_neg_z][..., 1:2]  # -y
 
-        # UC from [-1, 1] to [0, 1]
-        max_dim_div = max_axis.max(dim=0, keepdim=True).values
+        # Global scalar max_dim_div (since normalized to [-1,1], ~1.0, but consistent)
+        max_dim_div = max_axis.max()
+
+        # Normalize UC/VC per vertex (Nf, 3)
         uc = ((uc[..., 0] / max_dim_div + 1.0) * 0.5).clip(0, 1)
         vc = ((vc[..., 0] / max_dim_div + 1.0) * 0.5).clip(0, 1)
-
         uv = torch.stack([uc, vc], dim=-1)
 
         return uv, index

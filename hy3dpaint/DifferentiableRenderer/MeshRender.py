@@ -29,7 +29,6 @@ from .camera_utils import (
     get_orthographic_projection_matrix,
     get_perspective_projection_matrix,
 )
-from .inpaint import OptimizedInpainter
 
 try:
     from .mesh_utils import load_mesh, save_mesh, save_glb_trimesh, create_trimesh_object

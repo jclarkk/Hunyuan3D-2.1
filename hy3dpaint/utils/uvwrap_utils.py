@@ -19,7 +19,7 @@ import trimesh
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
 
 
-def sf_mesh_uv_wrap(mesh, island_padding=0.02, device='cuda', y_flip=False):
+def sf_mesh_uv_wrap(mesh, island_padding=0.05, device='cuda', y_flip=False):
     try:
         from uv_unwrapper import Unwrapper
     except ImportError:
