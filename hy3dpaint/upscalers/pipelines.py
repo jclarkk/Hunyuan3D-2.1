@@ -55,29 +55,43 @@ class NMKDSiaxUpscalerPipeline:
     """
 
     @classmethod
-    def from_pretrained(cls, device):
+    def from_pretrained(cls, device, texture_size: int = 4096):
         from spandrel import ModelLoader
         # Initialize Real-ESRGAN with 4x upscaling model
         model = ModelLoader().load_from_file('./weights/4x_NMKD-Siax_200k.pth')
         model.to(device).eval().half()
-        return cls(model, device)
+        return cls(model, device, texture_size)
 
-    def __init__(self, model, device):
+    def __init__(self, model, device, texture_size):
         self.model = model
         self.device = device
+        self.texture_size = texture_size
 
-    def __call__(self, input_image: Image.Image) -> Image.Image:
+    def upscale_once(self, image: Image.Image) -> Image.Image:
         from torchvision import transforms
-
         to_pil = transforms.ToPILImage()
         to_tensor = transforms.ToTensor()
 
-        input_tensor = to_tensor(input_image).unsqueeze(0).to(self.device).half()
-
+        input_tensor = to_tensor(image).unsqueeze(0).to(self.device).half()
         with torch.no_grad():
             output = self.model(input_tensor).float().clamp(0, 1).squeeze(0).cpu()
-
         return to_pil(output)
+
+    def __call__(self, input_image: Image.Image) -> Image.Image:
+        # --- Single or double pass upscaling ---
+        if self.texture_size in (6144, 8192):
+            # 1st upscale → 4096
+            img = self.upscale_once(input_image)
+            # 2nd upscale → ~16384, then resize down
+            img = self.upscale_once(img)
+        else:
+            img = self.upscale_once(input_image)
+
+        # --- Final resize to exact target size ---
+        if img.size[0] != self.texture_size:
+            img = img.resize((self.texture_size, self.texture_size), Image.LANCZOS)
+
+        return img
 
 
 class AuraSRUpscalerPipeline:
@@ -102,11 +116,11 @@ class TopazAPIUpscalerPipeline:
     High quality upscaling using Topaz synchronous API.
     """
 
-    def __init__(self, mode: str = 'enhance'):
+    def __init__(self, texture_size: int = 4096):
         self.topaz_api_key = os.getenv('TOPAZ_API_KEY')
         self.topaz_url = 'https://api.topazlabs.com/image/v1/enhance'
-        self.output_height = 4096
-        self.output_width = 4096
+        self.output_height = texture_size
+        self.output_width = texture_size
         self.model = 'Standard V2'
         self.output_format = 'png'
         self.max_retries = 5

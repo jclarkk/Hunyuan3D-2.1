@@ -381,7 +381,8 @@ class Hunyuan3DPaintPipeline:
                 if i < 6:
                     resized_images.append(upscaler(img))
                 else:
-                    new_size = (img.width * 4, img.height * 4)
+                    multiplier = int(texture_size // 1024)
+                    new_size = (img.width * multiplier, img.height * multiplier)
                     resized_images.append(img.resize(new_size, resample=Image.LANCZOS))
             enhance_images["albedo"] = resized_images
 
@@ -389,7 +390,8 @@ class Hunyuan3DPaintPipeline:
             if pbr and "mr" in enhance_images:
                 resized_mr = []
                 for i, img in enumerate(enhance_images["mr"]):
-                    new_size = (img.width * 4, img.height * 4)
+                    multiplier = int(texture_size // 1024)
+                    new_size = (img.width * multiplier, img.height * multiplier)
                     resized_mr.append(img.resize(new_size, resample=Image.LANCZOS))
                 enhance_images["mr"] = resized_mr
 
