@@ -20,11 +20,12 @@ import time
 import trimesh
 import numpy as np
 from PIL import Image
-from typing import List
+from typing import Dict, List, Optional
 from DifferentiableRenderer.MeshRender import MeshRender
 from hy3dpaint.mvadapter.pipeline import MVAdapterPipelineWrapper
 from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_i2mv_sdxl import MVAdapterI2MVSDXLPipeline
 from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_t2mv_sdxl import MVAdapterT2MVSDXLPipeline
+from hy3dpaint.qwenedit.pipeline import QwenEditQuantPipelineWrapper
 from utils.multiview_utils import multiviewDiffusionNet, MetalRoughnessOnlyNet
 from utils.pipeline_utils import ViewProcessor
 import warnings
@@ -69,13 +70,25 @@ def delete_model_and_cleanup(model_dict, key):
 
 
 class Hunyuan3DPaintConfig:
-    def __init__(self, hypaint_resolution, local_files_only=False, optimization_level="balanced") -> None:
+    def __init__(
+        self,
+        hypaint_resolution: int = 1024,
+        local_files_only: bool = False,
+        optimization_level: str = "balanced",
+        multiview_pretrained_path: str = "tencent/Hunyuan3D-2.1",
+        qwen_edit_base_model: Optional[str] = None,
+        qwen_edit_lora_paths: Optional[List[str]] = None,
+        qwen_edit_negative_prompt: Optional[str] = None,
+        qwen_edit_guidance_scale: float = 4.5,
+        qwen_edit_strength: float = 0.6,
+        qwen_edit_num_inference_steps: int = 30,
+    ) -> None:
         self.device = "cuda"
         self.local_files_only = local_files_only
 
         self.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
         self.custom_pipeline = "hunyuanpaintpbr"
-        self.multiview_pretrained_path = "tencent/Hunyuan3D-2.1"
+        self.multiview_pretrained_path = multiview_pretrained_path
         self.dino_ckpt_path = "facebook/dinov2-giant"
 
         self.raster_mode = "cr"
@@ -103,6 +116,36 @@ class Hunyuan3DPaintConfig:
         self.optimization_level = optimization_level
         self.continuous_inference = True
 
+        # Quantized Qwen edit defaults
+        self.qwen_edit_base_model = qwen_edit_base_model
+        self.qwen_edit_lora_paths = qwen_edit_lora_paths or [
+            os.path.join("weights", "loras", "Qwen-Edit-2509-Multiple-angles.safetensors"),
+            os.path.join("weights", "loras", "Qwen-Image-Lightning.safetensors"),
+        ]
+        self.qwen_edit_negative_prompt = qwen_edit_negative_prompt or (
+            "watermark, ugly, deformed, noisy, blurry, low contrast, baked lighting, ambient occlusion, shadow artifacts"
+        )
+        self.qwen_edit_guidance_scale = qwen_edit_guidance_scale
+        self.qwen_edit_strength = qwen_edit_strength
+        self.qwen_edit_num_inference_steps = qwen_edit_num_inference_steps
+        self.qwen_edit_primary_view_count = 6
+        self.qwen_edit_reference_size = 1024
+        self.qwen_edit_prompt_template = "High quality 3D reference render. {}"
+        self.qwen_edit_camera_prompts: Dict[str, str] = {
+            "front": "Keep the camera centered on the subject for a neutral frontal shot.",
+            "right": "Rotate the camera 90 degrees to the right around the subject.",
+            "back": "Rotate the camera 180 degrees to capture the subject from behind.",
+            "left": "Rotate the camera 90 degrees to the left around the subject.",
+            "top": "Turn the camera to a top-down, bird's-eye view.",
+            "bottom": "Move the camera below the subject for an upward shot.",
+        }
+        self.qwen_edit_pipeline_kwargs: Dict[str, object] = {
+            "trust_remote_code": True,
+            "variant": "fp16",
+            "use_safetensors": True,
+            "low_cpu_mem_usage": True,
+        }
+
 
 class Hunyuan3DPaintPipeline:
 
@@ -119,6 +162,153 @@ class Hunyuan3DPaintPipeline:
         self.view_processor = ViewProcessor(self.config, self.render)
         self.load_models()
 
+    def _ensure_mvadapter_fallback(self):
+        model = self.models.get("mv_adapter_fallback")
+        if model is None:
+            print("Loading MVAdapter fallback pipeline...")
+            model = MVAdapterPipelineWrapper.from_pretrained(
+                device=self.config.device,
+                local_files_only=self.config.local_files_only,
+                model_cls=MVAdapterI2MVSDXLPipeline,
+            )
+            self.models["mv_adapter_fallback"] = model
+        else:
+            model.to(self.config.device)
+        return model
+
+    def _generate_additional_views_with_mvadapter(
+        self,
+        mesh,
+        image_prompt,
+        normal_maps,
+        position_maps,
+        camera_elevations,
+        camera_azimuths,
+        seed,
+    ):
+        if not normal_maps:
+            return []
+
+        mv_adapter = self._ensure_mvadapter_fallback()
+        fallback_image_prompt = image_prompt
+        if isinstance(image_prompt, list):
+            fallback_image_prompt = image_prompt[0]
+
+        num_views = len(normal_maps)
+        result = mv_adapter(
+            mesh,
+            image_prompt=fallback_image_prompt,
+            normal_maps=normal_maps,
+            position_maps=position_maps,
+            camera_elevation_deg=camera_elevations,
+            camera_azimuth_deg=camera_azimuths,
+            num_views=num_views,
+            seed=seed,
+            height=self.config.hypaint_resolution,
+            width=self.config.hypaint_resolution,
+            use_mesh_renderer=False,
+        )
+
+        albedo = result.get("albedo", [])
+
+        if self.config.continuous_inference:
+            move_model_to_cpu(self.models["mv_adapter_fallback"])
+        else:
+            delete_model_and_cleanup(self.models, "mv_adapter_fallback")
+
+        return albedo[:num_views]
+
+    def _run_pbr_generation(self, multiviews, normal_maps, position_maps):
+        print("Preparing for PBR generation...")
+
+        albedo_views_cpu = [img.copy() for img in multiviews["albedo"]]
+
+        if self.config.continuous_inference and "multiview_model" in self.models:
+            print("Moving multiview model to CPU...")
+            move_model_to_cpu(self.models["multiview_model"])
+        elif "multiview_model" in self.models:
+            print("Deleting multiview model...")
+            delete_model_and_cleanup(self.models, "multiview_model")
+
+        del multiviews
+
+        aggressive_memory_cleanup()
+        time.sleep(1)
+
+        print(f"GPU memory before PBR: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB allocated")
+
+        t2 = time.time()
+        print("Loading PBR model...")
+        self.models["pbr_model"] = MetalRoughnessOnlyNet(self.config)
+
+        mr_views = self._execute_pbr_batches(albedo_views_cpu, normal_maps, position_maps)
+
+        for i in range(len(mr_views["mr"])):
+            mr_views["mr"][i] = mr_views["mr"][i].resize(
+                (self.config.hypaint_resolution, self.config.hypaint_resolution)
+            )
+
+        result = {
+            "albedo": albedo_views_cpu,
+            "mr": mr_views["mr"],
+        }
+
+        delete_model_and_cleanup(self.models, "pbr_model")
+
+        if self.config.continuous_inference and "multiview_model" in self.models:
+            print("Restoring multiview model to GPU...")
+            self.models["multiview_model"].to(self.config.device)
+
+        t3 = time.time()
+        print(f"PBR generation took {t3 - t2:.2f} seconds")
+
+        return result
+
+    def _execute_pbr_batches(self, albedo_views_cpu, normal_maps, position_maps):
+        view_count = len(albedo_views_cpu)
+
+        if (
+            view_count > 6
+            and getattr(self.config, "optimization_level", "balanced") == "aggressive"
+        ):
+            mr_views_list = []
+            for i in range(0, view_count, 6):
+                batch_end = min(i + 6, view_count)
+                batch_albedo = albedo_views_cpu[i:batch_end]
+                batch_normal = normal_maps[i:batch_end]
+                batch_position = position_maps[i:batch_end]
+
+                if len(batch_albedo) < 6:
+                    pad_count = 6 - len(batch_albedo)
+                    batch_albedo += [batch_albedo[-1]] * pad_count
+                    batch_normal += [batch_normal[-1]] * pad_count
+                    batch_position += [batch_position[-1]] * pad_count
+
+                with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
+                    batch_mr = self.models["pbr_model"](
+                        batch_albedo[0],
+                        batch_normal + batch_position,
+                        prompt="material roughness and metallic map",
+                        custom_view_size=512,
+                        resize_input=True,
+                    )
+
+                mr_views_list.extend(batch_mr["mr"][: batch_end - i])
+                aggressive_memory_cleanup()
+
+            return {"mr": mr_views_list[:view_count]}
+
+        with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
+            mr_views = self.models["pbr_model"](
+                albedo_views_cpu[0],
+                normal_maps + position_maps,
+                prompt="material roughness and metallic map",
+                custom_view_size=512,
+                resize_input=True,
+            )
+
+        return mr_views
+
     def load_models(self):
         torch.cuda.empty_cache()
         if self.config.multiview_pretrained_path == "tencent/Hunyuan3D-2.1":
@@ -132,6 +322,11 @@ class Hunyuan3DPaintPipeline:
             self.models["multiview_model"] = MVAdapterPipelineWrapper.from_pretrained(device=self.config.device,
                                                                                       local_files_only=self.config.local_files_only,
                                                                                       model_cls=MVAdapterT2MVSDXLPipeline)
+        elif self.config.multiview_pretrained_path == "qwen-edit-quant":
+            self.models["multiview_model"] = QwenEditQuantPipelineWrapper.from_config(
+                self.config, device=self.config.device
+            )
+            self.models["mv_adapter_fallback"] = None
 
         print("Models Loaded.")
 
@@ -226,10 +421,52 @@ class Hunyuan3DPaintPipeline:
                 resize_input=True,
             )
 
+        elif self.config.multiview_pretrained_path == "qwen-edit-quant":
+            if not image_prompt:
+                raise ValueError("Image prompt is required for qwen-edit-quant pipeline.")
+
+            qwen_wrapper = self.models["multiview_model"]
+            primary_views = qwen_wrapper(
+                image_prompt,
+                prompt,
+                selected_camera_elevs,
+                selected_camera_azims,
+                num_views=num_views,
+                seed=seed,
+                negative_prompt=self.config.qwen_edit_negative_prompt,
+            )
+
+            multiviews = {"albedo": primary_views}
+
+            t1 = time.time()
+            print(f"Qwen multiview generation took {t1 - t0:.2f} seconds")
+
+            if num_views > len(multiviews["albedo"]):
+                extra_start = len(multiviews["albedo"])
+                remaining = num_views - extra_start
+                print(f"Generating {remaining} additional views via MVAdapter fallback...")
+                fallback_albedo = self._generate_additional_views_with_mvadapter(
+                    mesh,
+                    image_prompt,
+                    normal_maps[extra_start:],
+                    position_maps[extra_start:],
+                    selected_camera_elevs[extra_start:],
+                    selected_camera_azims[extra_start:],
+                    seed,
+                )
+                multiviews["albedo"].extend(fallback_albedo)
+                if len(multiviews["albedo"]) < num_views and multiviews["albedo"]:
+                    multiviews["albedo"].extend(
+                        [multiviews["albedo"][-1]] * (num_views - len(multiviews["albedo"]))
+                    )
+                multiviews["albedo"] = multiviews["albedo"][:num_views]
+
+            if pbr:
+                multiviews = self._run_pbr_generation(multiviews, normal_maps, position_maps)
+
         elif self.config.multiview_pretrained_path in ["mv-adapter", "mv-adapter-t2mv"]:
-            ############  Multiview  ##########
             if self.config.multiview_pretrained_path == "mv-adapter":
-                multiviews = self.models['multiview_model'](
+                multiviews = self.models["multiview_model"](
                     mesh,
                     image_prompt[0],
                     normal_maps=normal_maps,
@@ -238,10 +475,10 @@ class Hunyuan3DPaintPipeline:
                     camera_azimuth_deg=selected_camera_azims,
                     num_views=num_views,
                     seed=seed,
-                    use_mesh_renderer=False
+                    use_mesh_renderer=False,
                 )
             else:  # mv-adapter-t2mv
-                multiviews = self.models['multiview_model'](
+                multiviews = self.models["multiview_model"](
                     mesh,
                     normal_maps=normal_maps,
                     position_maps=position_maps,
@@ -250,106 +487,14 @@ class Hunyuan3DPaintPipeline:
                     camera_azimuth_deg=selected_camera_azims,
                     num_views=num_views,
                     seed=seed,
-                    use_mesh_renderer=False
+                    use_mesh_renderer=False,
                 )
 
             t1 = time.time()
             print(f"Multiview generation took {t1 - t0:.2f} seconds")
 
             if pbr:
-                print("Preparing for PBR generation...")
-
-                # Store albedo views in CPU memory to free GPU
-                albedo_views_cpu = [img.copy() for img in multiviews['albedo']]
-
-                # Aggressive cleanup before loading PBR model
-                if self.config.continuous_inference:
-                    print("Moving multiview model to CPU...")
-                    move_model_to_cpu(self.models['multiview_model'])
-                else:
-                    print("Deleting multiview model...")
-                    delete_model_and_cleanup(self.models, 'multiview_model')
-
-                # Additional cleanup
-                del multiviews
-                aggressive_memory_cleanup()
-
-                # Wait a moment for memory to be fully released
-                time.sleep(1)
-
-                # Print memory status
-                print(f"GPU memory before PBR: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB allocated")
-
-                t2 = time.time()
-
-                # Load PBR model with optimizations
-                print("Loading PBR model...")
-                self.models['pbr_model'] = MetalRoughnessOnlyNet(self.config)
-
-                mr_views = None
-                # Process in smaller batches if needed
-                if len(albedo_views_cpu) > 6 and self.config.optimization_level == "aggressive":
-                    # Process PBR in batches to save memory
-                    mr_views_list = []
-                    for i in range(0, len(albedo_views_cpu), 6):
-                        batch_end = min(i + 6, len(albedo_views_cpu))
-                        batch_albedo = albedo_views_cpu[i:batch_end]
-                        batch_normal = normal_maps[i:batch_end]
-                        batch_position = position_maps[i:batch_end]
-
-                        if len(batch_albedo) < 6:
-                            # Pad to 6
-                            pad_count = 6 - len(batch_albedo)
-                            batch_albedo += [batch_albedo[-1]] * pad_count
-                            batch_normal += [batch_normal[-1]] * pad_count
-                            batch_position += [batch_position[-1]] * pad_count
-
-                        with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
-                            batch_mr = self.models["pbr_model"](
-                                batch_albedo[0],
-                                batch_normal + batch_position,
-                                prompt="material roughness and metallic map",
-                                custom_view_size=512,
-                                resize_input=True,
-                            )
-
-                        mr_views_list.extend(batch_mr["mr"][:batch_end - i])
-                        aggressive_memory_cleanup()
-
-                    mr_views = {"mr": mr_views_list[:len(albedo_views_cpu)]}
-                else:
-                    with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
-                        # Process all at once
-                        mr_views = self.models["pbr_model"](
-                            albedo_views_cpu[0],
-                            normal_maps + position_maps,
-                            prompt="material roughness and metallic map",
-                            custom_view_size=512,
-                            resize_input=True,
-                        )
-
-                # Resize the MR views to match the albedo views resolution
-                for i in range(len(mr_views["mr"])):
-                    mr_views["mr"][i] = mr_views["mr"][i].resize(
-                        (self.config.hypaint_resolution, self.config.hypaint_resolution))
-
-                # Recreate multiviews dict with CPU albedo and new MR
-                multiviews = {
-                    "albedo": albedo_views_cpu,
-                    "mr": mr_views["mr"]
-                }
-
-                # Clean up PBR model
-                delete_model_and_cleanup(self.models, 'pbr_model')
-
-                # Restore multiview model if continuous inference
-                if self.config.continuous_inference:
-                    print("Restoring multiview model to GPU...")
-                    self.models['multiview_model'].to(self.config.device)
-
-                t3 = time.time()
-                print(f"PBR generation took {t3 - t2:.2f} seconds")
-
+                multiviews = self._run_pbr_generation(multiviews, normal_maps, position_maps)
         else:
             raise ValueError("Unsupported multiview model path: {}".format(self.config.multiview_pretrained_path))
 
