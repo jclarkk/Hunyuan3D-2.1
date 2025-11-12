@@ -44,7 +44,7 @@ def run(args):
 
     t2 = time.time()
     # Load models
-    conf = Hunyuan3DPaintConfig(hypaint_resolution=1024)
+    conf = Hunyuan3DPaintConfig(hypaint_resolution=1024, qwen_edit_base_model=args.qwen_edit_base_model)
     conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
     conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
     conf.multiview_pretrained_path = args.texgen_model_path
@@ -119,6 +119,7 @@ if __name__ == "__main__":
     parser.add_argument('--unwrap_method', type=str,
                         help='UV unwrap method. Must be either "xatlas", "open3d" or "bpy"', default='xatlas')
     parser.add_argument("--texgen_model_path", type=str, default='tencent/Hunyuan3D-2.1')
+    parser.add_argument("--qwen_edit_base_model", type=str, default=None, help='Qwen edit base model')
     parser.add_argument('--upscale_model', type=str, default=None, help='Upscale model to use')
     parser.add_argument('--num_views', type=int, help='Number of texture projection views', default=8)
     parser.add_argument('--pbr', action='store_true', help='Generate PBR textures', default=False)
