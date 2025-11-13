@@ -29,7 +29,6 @@ class QwenEditQuantPipelineWrapper:
         self.camera_prompts = getattr(config, "qwen_edit_camera_prompts", {})
         self.negative_prompt = getattr(config, "qwen_edit_negative_prompt", "")
         self.guidance_scale = float(getattr(config, "qwen_edit_guidance_scale", 4.5))
-        self.strength = float(getattr(config, "qwen_edit_strength", 0.6))
         self.num_inference_steps = 8
 
     def to(self, device: str) -> "QwenEditQuantPipelineWrapper":
@@ -178,7 +177,6 @@ class QwenEditQuantPipelineWrapper:
                 image=reference,
                 num_inference_steps=self.num_inference_steps,
                 guidance_scale=self.guidance_scale,
-                strength=self.strength,
                 negative_prompt=negative,
                 generator=generator,
             )
