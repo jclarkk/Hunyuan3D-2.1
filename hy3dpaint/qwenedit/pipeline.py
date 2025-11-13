@@ -52,7 +52,6 @@ class QwenEditQuantPipelineWrapper:
         pipeline_kwargs.setdefault("local_files_only", getattr(config, "local_files_only", False))
         pipeline_kwargs = QwenEditQuantPipelineWrapper._sanitize_kwargs(
             pipeline_kwargs,
-            variant=getattr(config, "qwen_edit_variant", None),
             custom_pipeline=getattr(config, "qwen_edit_custom_pipeline", None),
         )
 
@@ -74,13 +73,8 @@ class QwenEditQuantPipelineWrapper:
         return cls(pipeline, device, config)
 
     @staticmethod
-    def _sanitize_kwargs(original_kwargs, variant=None, custom_pipeline=None):
+    def _sanitize_kwargs(original_kwargs, custom_pipeline=None):
         sanitized = dict(original_kwargs)
-        if variant in (None, "", False):
-            sanitized.pop("variant", None)
-        else:
-            sanitized["variant"] = variant
-
         if custom_pipeline in (None, "", False):
             sanitized.pop("custom_pipeline", None)
         else:
