@@ -78,7 +78,10 @@ class QwenEditQuantPipelineWrapper:
         if custom_pipeline in (None, "", False):
             sanitized.pop("custom_pipeline", None)
         else:
-            sanitized["custom_pipeline"] = custom_pipeline
+            if isinstance(custom_pipeline, str) and (custom_pipeline.endswith(".py") or "/" in custom_pipeline):
+                sanitized["custom_pipeline"] = custom_pipeline
+            else:
+                sanitized.pop("custom_pipeline", None)
 
         return sanitized
 
