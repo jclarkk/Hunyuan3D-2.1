@@ -20,7 +20,7 @@ import time
 import trimesh
 import numpy as np
 from PIL import Image
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from DifferentiableRenderer.MeshRender import MeshRender
 from hy3dpaint.mvadapter.pipeline import MVAdapterPipelineWrapper
 from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_i2mv_sdxl import MVAdapterI2MVSDXLPipeline
@@ -69,6 +69,25 @@ def delete_model_and_cleanup(model_dict, key):
         aggressive_memory_cleanup()
 
 
+def _resolve_torch_dtype(dtype: Optional[Union[str, torch.dtype]]) -> Optional[torch.dtype]:
+    if dtype is None:
+        return None
+    if isinstance(dtype, torch.dtype):
+        return dtype
+
+    dtype_str = str(dtype).lower()
+    mapping = {
+        "float16": torch.float16,
+        "fp16": torch.float16,
+        "half": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "bf16": torch.bfloat16,
+        "float32": torch.float32,
+        "fp32": torch.float32,
+    }
+    return mapping.get(dtype_str, None)
+
+
 class Hunyuan3DPaintConfig:
     def __init__(
         self,
@@ -83,6 +102,7 @@ class Hunyuan3DPaintConfig:
         qwen_edit_strength: float = 0.6,
         qwen_edit_num_inference_steps: int = 30,
         qwen_edit_custom_pipeline: Optional[str] = None,
+        qwen_edit_dtype: Optional[Union[str, torch.dtype]] = torch.bfloat16,
         qwen_edit_fuse_lora: bool = False,
     ) -> None:
         self.device = "cuda"
@@ -134,6 +154,7 @@ class Hunyuan3DPaintConfig:
         self.qwen_edit_reference_size = 1024
         self.qwen_edit_prompt_template = "High quality 3D reference render. {}"
         self.qwen_edit_custom_pipeline = qwen_edit_custom_pipeline
+        self.qwen_edit_dtype = _resolve_torch_dtype(qwen_edit_dtype)
         self.qwen_edit_fuse_lora = qwen_edit_fuse_lora
         self.qwen_edit_camera_prompts: Dict[str, str] = {
             "front": "Keep the camera centered on the subject for a neutral frontal shot.",
@@ -150,6 +171,8 @@ class Hunyuan3DPaintConfig:
         }
         if self.qwen_edit_custom_pipeline:
             self.qwen_edit_pipeline_kwargs.setdefault("custom_pipeline", self.qwen_edit_custom_pipeline)
+        if self.qwen_edit_dtype is not None:
+            self.qwen_edit_pipeline_kwargs["torch_dtype"] = self.qwen_edit_dtype
 
 
 class Hunyuan3DPaintPipeline:

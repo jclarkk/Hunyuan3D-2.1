@@ -29,7 +29,7 @@ class QwenEditQuantPipelineWrapper:
         self.camera_prompts = getattr(config, "qwen_edit_camera_prompts", {})
         self.negative_prompt = getattr(config, "qwen_edit_negative_prompt", "")
         self.guidance_scale = float(getattr(config, "qwen_edit_guidance_scale", 4.5))
-        self.num_inference_steps = 8
+        self.num_inference_steps = int(getattr(config, "qwen_edit_num_inference_steps", 30))
 
     def to(self, device: str) -> "QwenEditQuantPipelineWrapper":
         if hasattr(self.pipeline, "to"):
@@ -47,7 +47,8 @@ class QwenEditQuantPipelineWrapper:
             )
 
         pipeline_kwargs = dict(getattr(config, "qwen_edit_pipeline_kwargs", {}) or {})
-        pipeline_kwargs.setdefault("torch_dtype", torch.float16)
+        if pipeline_kwargs.get("torch_dtype") is None:
+            pipeline_kwargs.pop("torch_dtype", None)
         pipeline_kwargs.setdefault("local_files_only", getattr(config, "local_files_only", False))
         fuse_lora = getattr(config, "qwen_edit_fuse_lora", False)
         pipeline_kwargs = QwenEditQuantPipelineWrapper._sanitize_kwargs(
