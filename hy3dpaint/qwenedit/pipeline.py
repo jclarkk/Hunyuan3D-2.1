@@ -5,7 +5,7 @@ from typing import Iterable, List, Optional, Sequence
 
 import torch
 from PIL import Image
-from diffusers import AutoPipelineForImage2Image, DiffusionPipeline
+from diffusers import DiffusionPipeline
 
 
 LOGGER = logging.getLogger(__name__)
@@ -50,9 +50,14 @@ class QwenEditQuantPipelineWrapper:
         pipeline_kwargs = dict(getattr(config, "qwen_edit_pipeline_kwargs", {}) or {})
         pipeline_kwargs.setdefault("torch_dtype", torch.float16)
         pipeline_kwargs.setdefault("local_files_only", getattr(config, "local_files_only", False))
+        custom_pipeline_name = getattr(config, "qwen_edit_custom_pipeline", None)
+        if custom_pipeline_name:
+            pipeline_kwargs.setdefault("custom_pipeline", custom_pipeline_name)
+
+        pipeline_kwargs = {k: v for k, v in pipeline_kwargs.items() if v is not None}
 
         LOGGER.info("Loading Qwen edit pipeline from %s", base_model)
-        pipeline = AutoPipelineForImage2Image.from_pretrained(base_model, **pipeline_kwargs)
+        pipeline = DiffusionPipeline.from_pretrained(base_model, **pipeline_kwargs)
         pipeline.set_progress_bar_config(disable=True)
 
         if hasattr(pipeline, "to"):
