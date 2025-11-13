@@ -50,11 +50,11 @@ class QwenEditQuantPipelineWrapper:
         pipeline_kwargs = dict(getattr(config, "qwen_edit_pipeline_kwargs", {}) or {})
         pipeline_kwargs.setdefault("torch_dtype", torch.float16)
         pipeline_kwargs.setdefault("local_files_only", getattr(config, "local_files_only", False))
-        custom_pipeline_name = getattr(config, "qwen_edit_custom_pipeline", None)
-        if custom_pipeline_name:
-            pipeline_kwargs.setdefault("custom_pipeline", custom_pipeline_name)
-
-        pipeline_kwargs = {k: v for k, v in pipeline_kwargs.items() if v is not None}
+        pipeline_kwargs = QwenEditQuantPipelineWrapper._sanitize_kwargs(
+            pipeline_kwargs,
+            variant=getattr(config, "qwen_edit_variant", None),
+            custom_pipeline=getattr(config, "qwen_edit_custom_pipeline", None),
+        )
 
         LOGGER.info("Loading Qwen edit pipeline from %s", base_model)
         pipeline = DiffusionPipeline.from_pretrained(base_model, **pipeline_kwargs)
@@ -72,6 +72,21 @@ class QwenEditQuantPipelineWrapper:
             pipeline.enable_attention_slicing()
 
         return cls(pipeline, device, config)
+
+    @staticmethod
+    def _sanitize_kwargs(original_kwargs, variant=None, custom_pipeline=None):
+        sanitized = dict(original_kwargs)
+        if variant in (None, "", False):
+            sanitized.pop("variant", None)
+        else:
+            sanitized["variant"] = variant
+
+        if custom_pipeline in (None, "", False):
+            sanitized.pop("custom_pipeline", None)
+        else:
+            sanitized["custom_pipeline"] = custom_pipeline
+
+        return sanitized
 
     @staticmethod
     def _apply_loras(pipeline: DiffusionPipeline, lora_paths: Optional[Iterable[str]]) -> None:
