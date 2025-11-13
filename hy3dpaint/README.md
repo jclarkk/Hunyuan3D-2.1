@@ -26,6 +26,7 @@ python3 demo.py
 - Set `Hunyuan3DPaintConfig(multiview_pretrained_path="qwen-edit-quant")` and provide the quantized base model identifier by assigning `config.qwen_edit_base_model` (for example, a local AWQ/GPTQ Qwen image-edit checkpoint).
 - Place the LoRA weights `Qwen-Edit-2509-Multiple-angles.safetensors` and `Qwen-Image-Lightning.safetensors` inside `weights/loras/` (override `config.qwen_edit_lora_paths` if you store them elsewhere).
 - The wrapper produces the six canonical camera angles via Qwen; if more than six views are requested the remaining views are generated automatically with the MVAdapter fallback so downstream baking continues to work.
+- MVAdapter baseline views are now always rendered alongside Qwen and blended back using the mesh UVs. Tune `qwen_edit_style_strength`, `qwen_edit_style_preserve`, and `qwen_edit_style_blur` to control how much of the stylisation survives the geometry-aware fusion.
 - All other pipeline settings (PBR baking, upscaling, unwrap options) remain unchanged.
 
 ## Training

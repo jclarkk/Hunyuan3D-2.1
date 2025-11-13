@@ -61,10 +61,30 @@ parser.add_argument('--host', type=str, default='0.0.0.0')
 parser.add_argument('--port', type=int, default=8080)
 parser.add_argument('--texgen_model_path', type=str, default='tencent/Hunyuan3D-2.1')
 parser.add_argument("--qwen_edit_base_model", type=str, default=None, help='Qwen edit base model')
+parser.add_argument("--qwen_edit_style_strength", type=float, default=0.65,
+                    help="Amount of Qwen stylisation applied after geometry fusion (0-1).")
+parser.add_argument("--qwen_edit_style_preserve", type=float, default=0.35,
+                    help="Portion of MVAdapter detail to keep after stylisation (0-1).")
+parser.add_argument("--qwen_edit_style_blur", type=int, default=9,
+                    help="Gaussian blur kernel size (odd) used to smooth Qwen UV residuals.")
+parser.add_argument("--qwen_edit_dtype", type=str, default=None,
+                    help="Optional dtype override for the Qwen pipeline (e.g. 'float16').")
+parser.add_argument("--qwen_edit_disable_fuse_lora", action="store_true",
+                    help="Disable LoRA fusion inside the Qwen pipeline.")
 args = parser.parse_args()
 
 # Init texture generation pipeline
-conf = Hunyuan3DPaintConfig(hypaint_resolution=1024, qwen_edit_base_model=args.qwen_edit_base_model)
+conf = Hunyuan3DPaintConfig(
+    hypaint_resolution=1024,
+    qwen_edit_base_model=args.qwen_edit_base_model,
+    qwen_edit_style_strength=args.qwen_edit_style_strength,
+    qwen_edit_style_preserve=args.qwen_edit_style_preserve,
+    qwen_edit_style_blur=args.qwen_edit_style_blur,
+)
+if args.qwen_edit_dtype:
+    conf.qwen_edit_dtype = args.qwen_edit_dtype
+if args.qwen_edit_disable_fuse_lora:
+    conf.qwen_edit_fuse_lora = False
 conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
 conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
 conf.multiview_pretrained_path = args.texgen_model_path

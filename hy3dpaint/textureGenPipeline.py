@@ -19,9 +19,11 @@ import copy
 import time
 import trimesh
 import numpy as np
+import cv2
+import torch.nn.functional as F
 from PIL import Image
 from typing import Dict, List, Optional, Union
-from DifferentiableRenderer.MeshRender import MeshRender
+from DifferentiableRenderer.MeshRender import MeshRender, RenderConfig
 from hy3dpaint.mvadapter.pipeline import MVAdapterPipelineWrapper
 from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_i2mv_sdxl import MVAdapterI2MVSDXLPipeline
 from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_t2mv_sdxl import MVAdapterT2MVSDXLPipeline
@@ -103,7 +105,10 @@ class Hunyuan3DPaintConfig:
         qwen_edit_num_inference_steps: int = 30,
         qwen_edit_custom_pipeline: Optional[str] = None,
         qwen_edit_dtype: Optional[Union[str, torch.dtype]] = torch.bfloat16,
-        qwen_edit_fuse_lora: bool = False,
+        qwen_edit_fuse_lora: bool = True,
+        qwen_edit_style_strength: float = 0.65,
+        qwen_edit_style_blur: int = 9,
+        qwen_edit_style_preserve: float = 0.35,
     ) -> None:
         self.device = "cuda"
         self.local_files_only = local_files_only
@@ -156,6 +161,9 @@ class Hunyuan3DPaintConfig:
         self.qwen_edit_custom_pipeline = qwen_edit_custom_pipeline
         self.qwen_edit_dtype = _resolve_torch_dtype(qwen_edit_dtype)
         self.qwen_edit_fuse_lora = qwen_edit_fuse_lora
+        self.qwen_edit_style_strength = qwen_edit_style_strength
+        self.qwen_edit_style_blur = max(1, int(qwen_edit_style_blur))
+        self.qwen_edit_style_preserve = float(np.clip(qwen_edit_style_preserve, 0.0, 1.0))
         self.qwen_edit_camera_prompts: Dict[str, str] = {
             "front": "Keep the camera centered on the subject for a neutral frontal shot.",
             "right": "Rotate the camera 90 degrees to the right around the subject.",
@@ -217,34 +225,17 @@ class Hunyuan3DPaintPipeline:
         if not normal_maps:
             return []
 
-        mv_adapter = self._ensure_mvadapter_fallback()
-        fallback_image_prompt = image_prompt
-        if isinstance(image_prompt, list):
-            fallback_image_prompt = image_prompt[0]
-
-        num_views = len(normal_maps)
-        result = mv_adapter(
+        views = self._generate_mvadapter_views(
             mesh,
-            image_prompt=fallback_image_prompt,
-            normal_maps=normal_maps,
-            position_maps=position_maps,
-            camera_elevation_deg=camera_elevations,
-            camera_azimuth_deg=camera_azimuths,
-            num_views=num_views,
-            seed=seed,
-            height=self.config.hypaint_resolution,
-            width=self.config.hypaint_resolution,
-            use_mesh_renderer=False,
+            image_prompt,
+            normal_maps,
+            position_maps,
+            camera_elevations,
+            camera_azimuths,
+            seed,
+            release=True,
         )
-
-        albedo = result.get("albedo", [])
-
-        if self.config.continuous_inference:
-            move_model_to_cpu(self.models["mv_adapter_fallback"])
-        else:
-            delete_model_and_cleanup(self.models, "mv_adapter_fallback")
-
-        return albedo[:num_views]
+        return views
 
     def _run_pbr_generation(self, multiviews, normal_maps, position_maps):
         print("Preparing for PBR generation...")
@@ -336,6 +327,191 @@ class Hunyuan3DPaintPipeline:
             )
 
         return mr_views
+
+    def _generate_mvadapter_views(
+        self,
+        mesh,
+        image_prompt,
+        normal_maps,
+        position_maps,
+        camera_elevations,
+        camera_azimuths,
+        seed,
+        release=True,
+    ):
+        mv_adapter = self._ensure_mvadapter_fallback()
+        reference_image = image_prompt
+        if isinstance(image_prompt, list):
+            reference_image = image_prompt[0] if image_prompt else None
+
+        view_count = len(camera_elevations)
+        if view_count == 0:
+            return []
+
+        result = mv_adapter(
+            mesh,
+            image_prompt=reference_image,
+            normal_maps=normal_maps,
+            position_maps=position_maps,
+            camera_elevation_deg=camera_elevations,
+            camera_azimuth_deg=camera_azimuths,
+            num_views=view_count,
+            seed=seed,
+            height=self.config.hypaint_resolution,
+            width=self.config.hypaint_resolution,
+            use_mesh_renderer=False,
+        )
+
+        albedo = (result or {}).get("albedo", [])[:view_count]
+
+        if release:
+            self._release_mvadapter_fallback()
+
+        return albedo
+
+    def _release_mvadapter_fallback(self):
+        model = self.models.get("mv_adapter_fallback")
+        if model is None:
+            return
+        if self.config.continuous_inference:
+            move_model_to_cpu(model)
+        else:
+            delete_model_and_cleanup(self.models, "mv_adapter_fallback")
+
+    def _accumulate_uv_texture(self, views, camera_elevations, camera_azimuths):
+        texture_size = self.render.texture_size
+        device = self.render.device
+        tex_sum = torch.zeros(texture_size + (3,), device=device)
+        weight_sum = torch.zeros(texture_size + (1,), device=device)
+
+        for view, elev, azim in zip(views, camera_elevations, camera_azimuths):
+            tex, cos_map, _ = self.render.back_project(view, elev, azim)
+            weight = torch.clamp(cos_map, min=0.0) ** self.config.bake_exp
+            tex_sum += tex * weight
+            weight_sum += weight
+
+        return tex_sum, weight_sum
+
+    def _render_views_from_texture(
+        self,
+        texture_tensor: torch.Tensor,
+        camera_elevations,
+        camera_azimuths,
+        baseline_views,
+    ):
+        fused_views = []
+        device = self.render.device
+
+        texture_tensor = texture_tensor.clamp(0.0, 1.0).to(device)
+        texture_tensor = texture_tensor.permute(2, 0, 1).unsqueeze(0)  # [1, 3, H, W]
+
+        preserve = float(np.clip(self.config.qwen_edit_style_preserve, 0.0, 1.0))
+
+        for idx, (elev, azim) in enumerate(zip(camera_elevations, camera_azimuths)):
+            config = RenderConfig(
+                elev=elev,
+                azim=azim,
+                resolution=self.render.default_resolution,
+                bg_color=[1, 1, 1],
+            )
+            view_state = self.render._create_view_state(config)
+            rast_out, _ = self.render.raster_rasterize(
+                view_state.pos_clip, self.render.pos_idx, resolution=view_state.resolution
+            )
+            uv, _ = self.render.raster_interpolate(
+                self.render.vtx_uv[None, ...], rast_out, self.render.uv_idx
+            )
+            uv = uv[0, ..., :2].clamp(0.0, 1.0)
+            grid = torch.zeros(1, uv.shape[0], uv.shape[1], 2, device=device)
+            grid[..., 0] = uv[..., 0] * 2.0 - 1.0
+            grid[..., 1] = (1.0 - uv[..., 1]) * 2.0 - 1.0
+
+            sampled = F.grid_sample(
+                texture_tensor,
+                grid,
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=False,
+            )
+            view_tensor = sampled[0].permute(1, 2, 0)
+            visible_mask = torch.clamp(rast_out[..., -1:], 0, 1)[0]
+            baseline_np = np.array(baseline_views[idx]).astype(np.float32) / 255.0
+            baseline_tensor = torch.from_numpy(baseline_np).to(device)
+            view_tensor = view_tensor * visible_mask + baseline_tensor * (1 - visible_mask)
+
+            blended_tensor = view_tensor
+            if preserve > 0:
+                blended_tensor = torch.lerp(blended_tensor, baseline_tensor, preserve)
+            blended_tensor = blended_tensor.clamp(0.0, 1.0)
+
+            fused_np = (blended_tensor.cpu().numpy() * 255.0).astype(np.uint8)
+            fused_views.append(Image.fromarray(fused_np))
+
+        return fused_views
+
+    def _blend_qwen_with_baseline(
+        self,
+        baseline_views,
+        styled_views,
+        camera_elevations,
+        camera_azimuths,
+    ):
+        if not baseline_views:
+            return styled_views
+
+        device = self.render.device
+        texture_size = self.render.texture_size
+
+        baseline_sum, baseline_weight = self._accumulate_uv_texture(
+            baseline_views, camera_elevations, camera_azimuths
+        )
+
+        styled_list = styled_views or []
+        styled_sum = torch.zeros(texture_size + (3,), device=device)
+        styled_weight = torch.zeros(texture_size + (1,), device=device)
+
+        for idx, (elev, azim) in enumerate(zip(camera_elevations, camera_azimuths)):
+            if idx < len(styled_list):
+                view = styled_list[idx]
+            else:
+                view = baseline_views[idx]
+            tex, cos_map, _ = self.render.back_project(view, elev, azim)
+            weight = torch.clamp(cos_map, min=0.0) ** self.config.bake_exp
+            styled_sum += tex * weight
+            styled_weight += weight
+
+        baseline_weight = torch.clamp(baseline_weight, min=1e-5)
+        baseline_tex = baseline_sum / baseline_weight
+
+        styled_mask = styled_weight > 1e-5
+        styled_weight = torch.clamp(styled_weight, min=1e-5)
+        styled_tex = styled_sum / styled_weight
+        styled_tex = torch.where(styled_mask, styled_tex, baseline_tex)
+
+        blur_size = int(self.config.qwen_edit_style_blur)
+        if blur_size > 1:
+            if blur_size % 2 == 0:
+                blur_size += 1
+            styled_np = styled_tex.detach().cpu().numpy().astype(np.float32)
+            styled_np = cv2.GaussianBlur(styled_np, (blur_size, blur_size), 0)
+            styled_tex = torch.from_numpy(styled_np).to(device)
+
+        style_strength = float(np.clip(self.config.qwen_edit_style_strength, 0.0, 1.0))
+        preserve = float(np.clip(self.config.qwen_edit_style_preserve, 0.0, 1.0))
+
+        blended_tex = torch.lerp(baseline_tex, styled_tex, style_strength)
+        blended_tex = torch.lerp(blended_tex, baseline_tex, preserve)
+        blended_tex = torch.where(baseline_weight > 0, blended_tex, baseline_tex)
+        blended_tex = blended_tex.clamp(0.0, 1.0)
+
+        fused_views = self._render_views_from_texture(
+            blended_tex,
+            camera_elevations,
+            camera_azimuths,
+            baseline_views,
+        )
+
+        return fused_views
 
     def load_models(self):
         torch.cuda.empty_cache()
@@ -464,30 +640,29 @@ class Hunyuan3DPaintPipeline:
                 negative_prompt=self.config.qwen_edit_negative_prompt,
             )
 
-            multiviews = {"albedo": primary_views}
+            baseline_views = self._generate_mvadapter_views(
+                mesh,
+                image_prompt,
+                normal_maps,
+                position_maps,
+                selected_camera_elevs,
+                selected_camera_azims,
+                seed,
+                release=False,
+            )
+
+            fused_views = self._blend_qwen_with_baseline(
+                baseline_views,
+                primary_views,
+                selected_camera_elevs,
+                selected_camera_azims,
+            )
+
+            multiviews = {"albedo": fused_views}
+            self._release_mvadapter_fallback()
 
             t1 = time.time()
             print(f"Qwen multiview generation took {t1 - t0:.2f} seconds")
-
-            if num_views > len(multiviews["albedo"]):
-                extra_start = len(multiviews["albedo"])
-                remaining = num_views - extra_start
-                print(f"Generating {remaining} additional views via MVAdapter fallback...")
-                fallback_albedo = self._generate_additional_views_with_mvadapter(
-                    mesh,
-                    image_prompt,
-                    normal_maps[extra_start:],
-                    position_maps[extra_start:],
-                    selected_camera_elevs[extra_start:],
-                    selected_camera_azims[extra_start:],
-                    seed,
-                )
-                multiviews["albedo"].extend(fallback_albedo)
-                if len(multiviews["albedo"]) < num_views and multiviews["albedo"]:
-                    multiviews["albedo"].extend(
-                        [multiviews["albedo"][-1]] * (num_views - len(multiviews["albedo"]))
-                    )
-                multiviews["albedo"] = multiviews["albedo"][:num_views]
 
             if pbr:
                 multiviews = self._run_pbr_generation(multiviews, normal_maps, position_maps)

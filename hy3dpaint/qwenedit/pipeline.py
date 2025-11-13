@@ -46,15 +46,18 @@ class QwenEditQuantPipelineWrapper:
                 "Please provide the base Qwen image-edit model identifier or path."
             )
 
-        pipeline_kwargs = dict(getattr(config, "qwen_edit_pipeline_kwargs", {}) or {})
-        if pipeline_kwargs.get("torch_dtype") is None:
-            pipeline_kwargs.pop("torch_dtype", None)
-        pipeline_kwargs.setdefault("local_files_only", getattr(config, "local_files_only", False))
-        fuse_lora = getattr(config, "qwen_edit_fuse_lora", False)
-        pipeline_kwargs = QwenEditQuantPipelineWrapper._sanitize_kwargs(
-            pipeline_kwargs,
-            custom_pipeline=getattr(config, "qwen_edit_custom_pipeline", None),
-        )
+        pipeline_kwargs = getattr(config, "qwen_edit_pipeline_kwargs", {}) or {}
+        fuse_lora = getattr(config, "qwen_edit_fuse_lora", True)
+
+        dtype = getattr(config, "qwen_edit_dtype", None)
+        if dtype is not None and not isinstance(dtype, torch.dtype):
+            dtype = getattr(torch, dtype, None)
+        if dtype is not None:
+            pipeline_kwargs["torch_dtype"] = dtype
+
+        pipeline_kwargs["local_files_only"] = getattr(config, "local_files_only", False)
+        custom_pipeline = getattr(config, "qwen_edit_custom_pipeline", None)
+        pipeline_kwargs = QwenEditQuantPipelineWrapper._sanitize_kwargs(pipeline_kwargs, custom_pipeline=custom_pipeline)
 
         LOGGER.info("Loading Qwen edit pipeline from %s", base_model)
         pipeline = DiffusionPipeline.from_pretrained(base_model, **pipeline_kwargs)
