@@ -35,6 +35,7 @@ class QwenEditQuantPipelineWrapper:
         self.negative_prompt = getattr(config, "qwen_edit_negative_prompt", "")
         self.guidance_scale = float(getattr(config, "qwen_edit_guidance_scale", 4.5))
         self.num_inference_steps = int(getattr(config, "qwen_edit_num_inference_steps", 30))
+        self.control_scale = float(getattr(config, "qwen_edit_control_scale", 1.0))
 
     def to(self, device: str) -> "QwenEditQuantPipelineWrapper":
         if hasattr(self.pipeline, "to"):
@@ -167,6 +168,7 @@ class QwenEditQuantPipelineWrapper:
         num_views: int,
         seed: int = 42,
         negative_prompt: Optional[str] = None,
+        control_images: Optional[Sequence[Image.Image]] = None,
     ) -> List[Image.Image]:
         if not reference_images:
             raise ValueError("QwenEditQuantPipelineWrapper requires at least one reference image.")
@@ -196,6 +198,12 @@ class QwenEditQuantPipelineWrapper:
             if seed != -1:
                 generator = torch.Generator(device=self.device).manual_seed(seed + view_idx)
 
+            control_kwargs = {}
+            if control_images and view_idx < len(control_images):
+                prepared_control = self._prepare_control_image(control_images[view_idx])
+                control_kwargs["control_image"] = prepared_control
+                control_kwargs["controlnet_conditioning_scale"] = self.control_scale
+
             result = self.pipeline(
                 prompt=prompt_text,
                 image=reference,
@@ -203,6 +211,7 @@ class QwenEditQuantPipelineWrapper:
                 guidance_scale=self.guidance_scale,
                 negative_prompt=negative,
                 generator=generator,
+                **control_kwargs,
             )
 
             images = getattr(result, "images", result)
@@ -257,4 +266,10 @@ class QwenEditQuantPipelineWrapper:
         if azimuth_norm < 225:
             return "back"
         return "left"
+
+    def _prepare_control_image(self, image: Image.Image) -> Image.Image:
+        ctrl = image.convert("RGB")
+        if self.reference_size:
+            ctrl = ctrl.resize((self.reference_size, self.reference_size), Image.NEAREST)
+        return ctrl
 
