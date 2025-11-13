@@ -173,14 +173,26 @@ class QwenEditQuantPipelineWrapper:
         if not reference_images:
             raise ValueError("QwenEditQuantPipelineWrapper requires at least one reference image.")
 
-        reference = self._prepare_reference(reference_images[0])
         negative = negative_prompt or self.negative_prompt
 
-        view_count = min(num_views, self.primary_view_count, len(camera_azimuths), len(camera_elevations))
+        view_count = min(num_views, self.primary_view_count, len(camera_azimuths), len(camera_elevations), len(reference_images))
         outputs: List[Image.Image] = []
 
         LOGGER.info("Starting Qwen stylisation for %d view(s)", view_count)
         for view_idx in range(view_count):
+            reference_batch = reference_images[view_idx]
+            if not isinstance(reference_batch, (list, tuple)):
+                reference_batch = [reference_batch]
+
+            processed_batch: List[Image.Image] = []
+            for idx, img in enumerate(reference_batch):
+                if idx == 0:
+                    processed_batch.append(self._prepare_reference(img))
+                else:
+                    processed_batch.append(self._prepare_aux_image(img))
+
+            reference = processed_batch[0]
+
             LOGGER.info(
                 "Qwen stylising view %d/%d (azimuth=%.2f°, elevation=%.2f°)",
                 view_idx + 1,
@@ -198,20 +210,13 @@ class QwenEditQuantPipelineWrapper:
             if seed != -1:
                 generator = torch.Generator(device=self.device).manual_seed(seed + view_idx)
 
-            control_kwargs = {}
-            if control_images and view_idx < len(control_images):
-                prepared_control = self._prepare_control_image(control_images[view_idx])
-                control_kwargs["control_image"] = prepared_control
-                control_kwargs["controlnet_conditioning_scale"] = self.control_scale
-
             result = self.pipeline(
                 prompt=prompt_text,
-                image=reference,
+                image=processed_batch,
                 num_inference_steps=self.num_inference_steps,
                 guidance_scale=self.guidance_scale,
                 negative_prompt=negative,
                 generator=generator,
-                **control_kwargs,
             )
 
             images = getattr(result, "images", result)
@@ -267,9 +272,11 @@ class QwenEditQuantPipelineWrapper:
             return "back"
         return "left"
 
-    def _prepare_control_image(self, image: Image.Image) -> Image.Image:
-        ctrl = image.convert("RGB")
+    def _prepare_aux_image(self, image: Image.Image) -> Image.Image:
+        if not isinstance(image, Image.Image):
+            raise TypeError(f"Expected PIL.Image, received {type(image).__name__}")
+        aux = image.convert("RGB")
         if self.reference_size:
-            ctrl = ctrl.resize((self.reference_size, self.reference_size), Image.NEAREST)
-        return ctrl
+            aux = aux.resize((self.reference_size, self.reference_size), Image.NEAREST)
+        return aux
 
