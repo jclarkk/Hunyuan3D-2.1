@@ -205,6 +205,8 @@ class QwenEditQuantPipelineWrapper:
                 camera_azimuths[view_idx],
                 camera_elevations[view_idx],
             )
+            if len(processed_batch) > 1:
+                prompt_text = f"{prompt_text} 第二张图给出了位置边界，请严格贴合。"
 
             generator = None
             if seed != -1:
