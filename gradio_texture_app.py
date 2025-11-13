@@ -60,10 +60,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--host', type=str, default='0.0.0.0')
 parser.add_argument('--port', type=int, default=8080)
 parser.add_argument('--texgen_model_path', type=str, default='tencent/Hunyuan3D-2.1')
+parser.add_argument("--qwen_edit_base_model", type=str, default=None, help='Qwen edit base model')
 args = parser.parse_args()
 
 # Init texture generation pipeline
-conf = Hunyuan3DPaintConfig(hypaint_resolution=1024)
+conf = Hunyuan3DPaintConfig(hypaint_resolution=1024, qwen_edit_base_model=args.qwen_edit_base_model)
 conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
 conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
 conf.multiview_pretrained_path = args.texgen_model_path
