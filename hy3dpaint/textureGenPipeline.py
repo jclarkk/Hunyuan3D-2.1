@@ -253,6 +253,14 @@ class Hunyuan3DPaintPipeline:
 
         return albedo
 
+    def _select_reference_image(self, image_prompt, view_idx):
+        if isinstance(image_prompt, list):
+            if not image_prompt:
+                raise ValueError("image_prompt list is empty.")
+            idx = min(view_idx, len(image_prompt) - 1)
+            return image_prompt[idx]
+        return image_prompt
+
     def _run_pbr_generation(self, multiviews, normal_maps, position_maps):
         print("Preparing for PBR generation...")
 
@@ -465,28 +473,28 @@ class Hunyuan3DPaintPipeline:
             LOGGER.info("Moving Qwen pipeline to GPU for stylisation")
             qwen_wrapper = qwen_wrapper.to(self.config.device)
             self.models["multiview_model"] = qwen_wrapper
-        multi_image_prompts = []
-        for view_idx in range(num_views):
-            base_image = self._select_reference_image(image_prompt, view_idx)
-            if self.config.qwen_edit_use_control and view_idx < len(position_maps):
-                control_image = position_maps[view_idx]
-                control_image = control_image.convert("RGB")
-                if self.config.qwen_edit_reference_size:
-                    size = (self.config.qwen_edit_reference_size, self.config.qwen_edit_reference_size)
-                    control_image = control_image.resize(size, Image.NEAREST)
-                multi_image_prompts.append([base_image, control_image])
-            else:
-                multi_image_prompts.append([base_image])
 
-        primary_views = qwen_wrapper(
-            multi_image_prompts,
-            prompt,
-            selected_camera_elevs,
-            selected_camera_azims,
-            num_views=num_views,
-            seed=seed,
-            negative_prompt=self.config.qwen_edit_negative_prompt,
-        )
+            multi_image_prompts = []
+            for view_idx in range(num_views):
+                base_image = self._select_reference_image(image_prompt, view_idx)
+                if self.config.qwen_edit_use_control and view_idx < len(position_maps):
+                    control_image = position_maps[view_idx].convert("RGB")
+                    if self.config.qwen_edit_reference_size:
+                        size = (self.config.qwen_edit_reference_size, self.config.qwen_edit_reference_size)
+                        control_image = control_image.resize(size, Image.NEAREST)
+                    multi_image_prompts.append([base_image, control_image])
+                else:
+                    multi_image_prompts.append([base_image])
+
+            primary_views = qwen_wrapper(
+                multi_image_prompts,
+                prompt,
+                selected_camera_elevs,
+                selected_camera_azims,
+                num_views=num_views,
+                seed=seed,
+                negative_prompt=self.config.qwen_edit_negative_prompt,
+            )
             LOGGER.info("Moving Qwen pipeline back to CPU")
             qwen_wrapper = qwen_wrapper.to("cpu")
             self.models["multiview_model"] = qwen_wrapper
