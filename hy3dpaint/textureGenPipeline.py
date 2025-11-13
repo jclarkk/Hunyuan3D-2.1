@@ -14,6 +14,7 @@
 
 import gc
 import os
+import logging
 import torch
 import copy
 import time
@@ -36,6 +37,8 @@ warnings.filterwarnings("ignore")
 from diffusers.utils import logging as diffusers_logging
 
 diffusers_logging.set_verbosity(50)
+
+LOGGER = logging.getLogger(__name__)
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"
 
@@ -630,6 +633,9 @@ class Hunyuan3DPaintPipeline:
                 raise ValueError("Image prompt is required for qwen-edit-quant pipeline.")
 
             qwen_wrapper = self.models["multiview_model"]
+            LOGGER.info("Moving Qwen pipeline to GPU for stylisation")
+            qwen_wrapper = qwen_wrapper.to(self.config.device)
+            self.models["multiview_model"] = qwen_wrapper
             primary_views = qwen_wrapper(
                 image_prompt,
                 prompt,
@@ -639,7 +645,10 @@ class Hunyuan3DPaintPipeline:
                 seed=seed,
                 negative_prompt=self.config.qwen_edit_negative_prompt,
             )
-
+            LOGGER.info("Moving Qwen pipeline back to CPU")
+            qwen_wrapper = qwen_wrapper.to("cpu")
+            self.models["multiview_model"] = qwen_wrapper
+            aggressive_memory_cleanup()
             baseline_views = self._generate_mvadapter_views(
                 mesh,
                 image_prompt,

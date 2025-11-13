@@ -9,6 +9,11 @@ from diffusers import DiffusionPipeline
 
 
 LOGGER = logging.getLogger(__name__)
+if not LOGGER.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
+    LOGGER.addHandler(_handler)
+LOGGER.setLevel(logging.INFO)
 
 
 class QwenEditQuantPipelineWrapper:
@@ -71,6 +76,10 @@ class QwenEditQuantPipelineWrapper:
             getattr(config, "qwen_edit_lora_paths", None),
             fuse=fuse_lora,
         )
+        if fuse_lora:
+            LOGGER.info("Fused Qwen LoRA weights into base pipeline")
+        else:
+            LOGGER.info("Loaded Qwen LoRA weights without fusion")
 
         with suppress(AttributeError):
             pipeline.enable_attention_slicing()
@@ -168,7 +177,15 @@ class QwenEditQuantPipelineWrapper:
         view_count = min(num_views, self.primary_view_count, len(camera_azimuths), len(camera_elevations))
         outputs: List[Image.Image] = []
 
+        LOGGER.info("Starting Qwen stylisation for %d view(s)", view_count)
         for view_idx in range(view_count):
+            LOGGER.info(
+                "Qwen stylising view %d/%d (azimuth=%.2f°, elevation=%.2f°)",
+                view_idx + 1,
+                view_count,
+                camera_azimuths[view_idx],
+                camera_elevations[view_idx],
+            )
             prompt_text = self._compose_prompt(
                 base_prompt,
                 camera_azimuths[view_idx],
@@ -190,6 +207,7 @@ class QwenEditQuantPipelineWrapper:
 
             images = getattr(result, "images", result)
             outputs.append(images[0])
+            LOGGER.info("Completed Qwen view %d/%d", view_idx + 1, view_count)
 
         return outputs
 
