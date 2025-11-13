@@ -438,7 +438,11 @@ class Hunyuan3DPaintPipeline:
             )
             view_tensor = sampled[0].permute(1, 2, 0)
             visible_mask = torch.clamp(rast_out[..., -1:], 0, 1)[0]
-            baseline_np = np.array(baseline_views[idx]).astype(np.float32) / 255.0
+            baseline_img = baseline_views[idx].convert("RGB")
+            target_size = (view_tensor.shape[1], view_tensor.shape[0])
+            if baseline_img.size != target_size:
+                baseline_img = baseline_img.resize(target_size, Image.LANCZOS)
+            baseline_np = np.array(baseline_img).astype(np.float32) / 255.0
             baseline_tensor = torch.from_numpy(baseline_np).to(device)
             view_tensor = view_tensor * visible_mask + baseline_tensor * (1 - visible_mask)
 
