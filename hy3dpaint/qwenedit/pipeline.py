@@ -49,6 +49,7 @@ class QwenEditQuantPipelineWrapper:
         pipeline_kwargs = dict(getattr(config, "qwen_edit_pipeline_kwargs", {}) or {})
         pipeline_kwargs.setdefault("torch_dtype", torch.float16)
         pipeline_kwargs.setdefault("local_files_only", getattr(config, "local_files_only", False))
+        fuse_lora = getattr(config, "qwen_edit_fuse_lora", False)
         pipeline_kwargs = QwenEditQuantPipelineWrapper._sanitize_kwargs(
             pipeline_kwargs,
             custom_pipeline=getattr(config, "qwen_edit_custom_pipeline", None),
@@ -64,6 +65,7 @@ class QwenEditQuantPipelineWrapper:
         cls._apply_loras(
             pipeline,
             getattr(config, "qwen_edit_lora_paths", None),
+            fuse=fuse_lora,
         )
 
         with suppress(AttributeError):
@@ -85,7 +87,7 @@ class QwenEditQuantPipelineWrapper:
         return sanitized
 
     @staticmethod
-    def _apply_loras(pipeline: DiffusionPipeline, lora_paths: Optional[Iterable[str]]) -> None:
+    def _apply_loras(pipeline: DiffusionPipeline, lora_paths: Optional[Iterable[str]], fuse: bool = False) -> None:
         if not lora_paths:
             return
 
@@ -125,8 +127,9 @@ class QwenEditQuantPipelineWrapper:
 
         with suppress(AttributeError):
             pipeline.set_adapters(adapters, adapter_weights=[1.0] * len(adapters))
-        with suppress(Exception):
-            pipeline.fuse_lora()
+        if fuse:
+            with suppress(Exception):
+                pipeline.fuse_lora()
 
     @staticmethod
     def _first_lora_file(directory: str) -> Optional[str]:

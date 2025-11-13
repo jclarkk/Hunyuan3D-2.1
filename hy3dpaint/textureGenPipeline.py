@@ -83,6 +83,7 @@ class Hunyuan3DPaintConfig:
         qwen_edit_strength: float = 0.6,
         qwen_edit_num_inference_steps: int = 30,
         qwen_edit_custom_pipeline: Optional[str] = None,
+        qwen_edit_fuse_lora: bool = False,
     ) -> None:
         self.device = "cuda"
         self.local_files_only = local_files_only
@@ -133,6 +134,7 @@ class Hunyuan3DPaintConfig:
         self.qwen_edit_reference_size = 1024
         self.qwen_edit_prompt_template = "High quality 3D reference render. {}"
         self.qwen_edit_custom_pipeline = qwen_edit_custom_pipeline
+        self.qwen_edit_fuse_lora = qwen_edit_fuse_lora
         self.qwen_edit_camera_prompts: Dict[str, str] = {
             "front": "Keep the camera centered on the subject for a neutral frontal shot.",
             "right": "Rotate the camera 90 degrees to the right around the subject.",
