@@ -20,7 +20,7 @@ import copy
 import time
 import trimesh
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from typing import Dict, List, Optional, Union
 from DifferentiableRenderer.MeshRender import MeshRender
 from hy3dpaint.mvadapter.pipeline import MVAdapterPipelineWrapper
@@ -478,7 +478,9 @@ class Hunyuan3DPaintPipeline:
             for view_idx in range(num_views):
                 base_image = self._select_reference_image(image_prompt, view_idx)
                 if self.config.qwen_edit_use_control and view_idx < len(position_maps):
-                    control_image = position_maps[view_idx].convert("RGB")
+                    control_image = position_maps[view_idx].convert("L")
+                    control_image = ImageOps.autocontrast(control_image)
+                    control_image = Image.merge("RGB", (control_image, control_image, control_image))
                     if self.config.qwen_edit_reference_size:
                         size = (self.config.qwen_edit_reference_size, self.config.qwen_edit_reference_size)
                         control_image = control_image.resize(size, Image.NEAREST)
