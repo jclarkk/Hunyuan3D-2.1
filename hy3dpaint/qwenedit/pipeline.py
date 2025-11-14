@@ -205,15 +205,21 @@ class QwenEditQuantPipelineWrapper:
                 camera_azimuths[view_idx],
                 camera_elevations[view_idx],
             )
+
             if len(processed_batch) > 1:
-                prompt_text = f"{prompt_text} 第二张图给出了位置边界，请严格贴合。"
+                prompt_payload: Union[str, List[str]] = [
+                    prompt_text,
+                    "第二张输入是位置或边界参考图，请保持主体紧贴其中的轮廓。",
+                ]
+            else:
+                prompt_payload = prompt_text
 
             generator = None
             if seed != -1:
                 generator = torch.Generator(device=self.device).manual_seed(seed + view_idx)
 
             result = self.pipeline(
-                prompt=prompt_text,
+                prompt=prompt_payload,
                 image=processed_batch,
                 num_inference_steps=self.num_inference_steps,
                 guidance_scale=self.guidance_scale,
