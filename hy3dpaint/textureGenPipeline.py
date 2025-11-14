@@ -483,20 +483,20 @@ class Hunyuan3DPaintPipeline:
             if not image_prompt:
                 raise ValueError("Image prompt is required for qwen-edit-quant pipeline.")
 
-        qwen_wrapper = self.models["multiview_model"]
-        LOGGER.info("Moving Qwen pipeline to GPU for stylisation")
-        qwen_wrapper = qwen_wrapper.to(self.config.device)
-        self.models["multiview_model"] = qwen_wrapper
+            qwen_wrapper = self.models["multiview_model"]
+            LOGGER.info("Moving Qwen pipeline to GPU for stylisation")
+            qwen_wrapper = qwen_wrapper.to(self.config.device)
+            self.models["multiview_model"] = qwen_wrapper
 
-        reference_images = []
-        for view_idx in range(num_views):
-            base_image = self._select_reference_image(image_prompt, view_idx)
-            if self.config.qwen_edit_use_control and view_idx < len(position_maps):
-                base_image = self._apply_boundary_overlay(base_image, position_maps[view_idx])
-            reference_images.append(base_image)
+            reference_images = []
+            for view_idx in range(num_views):
+                base_image = self._select_reference_image(image_prompt, view_idx)
+                if self.config.qwen_edit_use_control and view_idx < len(position_maps):
+                    base_image = self._apply_boundary_overlay(base_image, position_maps[view_idx])
+                reference_images.append(base_image)
 
-        primary_views = qwen_wrapper(
-            reference_images,
+            primary_views = qwen_wrapper(
+                reference_images,
                 prompt,
                 selected_camera_elevs,
                 selected_camera_azims,
