@@ -259,21 +259,22 @@ class Hunyuan3DPaintPipeline:
             return image_prompt[idx]
         return image_prompt
 
-    def _apply_boundary_overlay(self, base_image, position_image):
-        base = base_image.convert("RGB")
+    def _prepare_base_reference(self, image):
+        base = image.convert("RGB")
         if self.config.qwen_edit_reference_size:
             size = (self.config.qwen_edit_reference_size, self.config.qwen_edit_reference_size)
             base = base.resize(size, Image.BICUBIC)
+        return base
 
-        position = position_image.convert("L")
-        position = ImageOps.autocontrast(position)
-        if position.size != base.size:
-            position = position.resize(base.size, Image.NEAREST)
-
-        edges = position.filter(ImageFilter.FIND_EDGES)
+    def _create_boundary_image(self, position_image, target_size):
+        pos = position_image.convert("L")
+        pos = ImageOps.autocontrast(pos)
+        if pos.size != target_size:
+            pos = pos.resize(target_size, Image.NEAREST)
+        edges = pos.filter(ImageFilter.FIND_EDGES)
         edges = ImageOps.autocontrast(edges)
-        color_edges = ImageOps.colorize(edges, black=(0, 0, 0), white=(255, 64, 64))
-        return Image.blend(base, color_edges, alpha=0.35)
+        colored = ImageOps.colorize(edges, black=(0, 0, 0), white=(255, 64, 64))
+        return colored
 
     def _run_pbr_generation(self, multiviews, normal_maps, position_maps):
         print("Preparing for PBR generation...")
@@ -488,15 +489,18 @@ class Hunyuan3DPaintPipeline:
             qwen_wrapper = qwen_wrapper.to(self.config.device)
             self.models["multiview_model"] = qwen_wrapper
 
-            reference_images = []
+            reference_batches = []
             for view_idx in range(num_views):
                 base_image = self._select_reference_image(image_prompt, view_idx)
                 if self.config.qwen_edit_use_control and view_idx < len(position_maps):
-                    base_image = self._apply_boundary_overlay(base_image, position_maps[view_idx])
-                reference_images.append(base_image)
+                    boundary_image = self._create_boundary_image(position_maps[view_idx], base_image)
+                    batch = [self._prepare_base_reference(base_image), boundary_image]
+                else:
+                    batch = [self._prepare_base_reference(base_image)]
+                reference_batches.append(batch)
 
             primary_views = qwen_wrapper(
-                reference_images,
+                reference_batches,
                 prompt,
                 selected_camera_elevs,
                 selected_camera_azims,
