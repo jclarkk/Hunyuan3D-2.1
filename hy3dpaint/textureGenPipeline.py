@@ -20,7 +20,7 @@ import copy
 import time
 import trimesh
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageFilter
 from typing import Dict, List, Optional, Union
 from DifferentiableRenderer.MeshRender import MeshRender
 from hy3dpaint.mvadapter.pipeline import MVAdapterPipelineWrapper
@@ -108,7 +108,6 @@ class Hunyuan3DPaintConfig:
         qwen_edit_dtype: Optional[Union[str, torch.dtype]] = torch.bfloat16,
         qwen_edit_fuse_lora: bool = True,
         qwen_edit_use_control: bool = True,
-        qwen_edit_control_scale: float = 1.0,
     ) -> None:
         self.device = "cuda"
         self.local_files_only = local_files_only
@@ -162,7 +161,6 @@ class Hunyuan3DPaintConfig:
         self.qwen_edit_dtype = _resolve_torch_dtype(qwen_edit_dtype)
         self.qwen_edit_fuse_lora = qwen_edit_fuse_lora
         self.qwen_edit_use_control = qwen_edit_use_control
-        self.qwen_edit_control_scale = qwen_edit_control_scale
         self.qwen_edit_camera_prompts: Dict[str, str] = {
             "front": "保持镜头正面对准主体。",
             "right": "将镜头向右旋转90度。",
@@ -260,6 +258,22 @@ class Hunyuan3DPaintPipeline:
             idx = min(view_idx, len(image_prompt) - 1)
             return image_prompt[idx]
         return image_prompt
+
+    def _apply_boundary_overlay(self, base_image, position_image):
+        base = base_image.convert("RGB")
+        if self.config.qwen_edit_reference_size:
+            size = (self.config.qwen_edit_reference_size, self.config.qwen_edit_reference_size)
+            base = base.resize(size, Image.BICUBIC)
+
+        position = position_image.convert("L")
+        position = ImageOps.autocontrast(position)
+        if position.size != base.size:
+            position = position.resize(base.size, Image.NEAREST)
+
+        edges = position.filter(ImageFilter.FIND_EDGES)
+        edges = ImageOps.autocontrast(edges)
+        color_edges = ImageOps.colorize(edges, black=(0, 0, 0), white=(255, 64, 64))
+        return Image.blend(base, color_edges, alpha=0.35)
 
     def _run_pbr_generation(self, multiviews, normal_maps, position_maps):
         print("Preparing for PBR generation...")
@@ -469,27 +483,20 @@ class Hunyuan3DPaintPipeline:
             if not image_prompt:
                 raise ValueError("Image prompt is required for qwen-edit-quant pipeline.")
 
-            qwen_wrapper = self.models["multiview_model"]
-            LOGGER.info("Moving Qwen pipeline to GPU for stylisation")
-            qwen_wrapper = qwen_wrapper.to(self.config.device)
-            self.models["multiview_model"] = qwen_wrapper
+        qwen_wrapper = self.models["multiview_model"]
+        LOGGER.info("Moving Qwen pipeline to GPU for stylisation")
+        qwen_wrapper = qwen_wrapper.to(self.config.device)
+        self.models["multiview_model"] = qwen_wrapper
 
-            multi_image_prompts = []
-            for view_idx in range(num_views):
-                base_image = self._select_reference_image(image_prompt, view_idx)
-                if self.config.qwen_edit_use_control and view_idx < len(position_maps):
-                    control_image = position_maps[view_idx].convert("L")
-                    control_image = ImageOps.autocontrast(control_image)
-                    control_image = Image.merge("RGB", (control_image, control_image, control_image))
-                    if self.config.qwen_edit_reference_size:
-                        size = (self.config.qwen_edit_reference_size, self.config.qwen_edit_reference_size)
-                        control_image = control_image.resize(size, Image.NEAREST)
-                    multi_image_prompts.append([base_image, control_image])
-                else:
-                    multi_image_prompts.append([base_image])
+        reference_images = []
+        for view_idx in range(num_views):
+            base_image = self._select_reference_image(image_prompt, view_idx)
+            if self.config.qwen_edit_use_control and view_idx < len(position_maps):
+                base_image = self._apply_boundary_overlay(base_image, position_maps[view_idx])
+            reference_images.append(base_image)
 
-            primary_views = qwen_wrapper(
-                multi_image_prompts,
+        primary_views = qwen_wrapper(
+            reference_images,
                 prompt,
                 selected_camera_elevs,
                 selected_camera_azims,

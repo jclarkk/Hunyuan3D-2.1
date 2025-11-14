@@ -61,8 +61,6 @@ parser.add_argument('--host', type=str, default='0.0.0.0')
 parser.add_argument('--port', type=int, default=8080)
 parser.add_argument('--texgen_model_path', type=str, default='tencent/Hunyuan3D-2.1')
 parser.add_argument("--qwen_edit_base_model", type=str, default=None, help='Qwen edit base model')
-parser.add_argument("--qwen_edit_control_scale", type=float, default=1.0,
-                    help="ControlNet conditioning scale for Qwen position maps.")
 parser.add_argument("--qwen_edit_disable_control", action="store_true",
                     help="Disable passing position ControlNet maps to Qwen.")
 parser.add_argument("--qwen_edit_dtype", type=str, default=None,
@@ -76,7 +74,6 @@ conf = Hunyuan3DPaintConfig(
     hypaint_resolution=1024,
     qwen_edit_base_model=args.qwen_edit_base_model,
     qwen_edit_use_control=not args.qwen_edit_disable_control,
-    qwen_edit_control_scale=args.qwen_edit_control_scale,
 )
 if args.qwen_edit_dtype:
     conf.qwen_edit_dtype = args.qwen_edit_dtype

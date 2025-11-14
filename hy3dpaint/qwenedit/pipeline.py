@@ -35,7 +35,7 @@ class QwenEditQuantPipelineWrapper:
         self.negative_prompt = getattr(config, "qwen_edit_negative_prompt", "")
         self.guidance_scale = float(getattr(config, "qwen_edit_guidance_scale", 4.5))
         self.num_inference_steps = int(getattr(config, "qwen_edit_num_inference_steps", 30))
-        self.control_scale = float(getattr(config, "qwen_edit_control_scale", 1.0))
+        self.use_control = bool(getattr(config, "qwen_edit_use_control", False))
 
     def to(self, device: str) -> "QwenEditQuantPipelineWrapper":
         if hasattr(self.pipeline, "to"):
@@ -180,18 +180,8 @@ class QwenEditQuantPipelineWrapper:
 
         LOGGER.info("Starting Qwen stylisation for %d view(s)", view_count)
         for view_idx in range(view_count):
-            reference_batch = reference_images[view_idx]
-            if not isinstance(reference_batch, (list, tuple)):
-                reference_batch = [reference_batch]
-
-            processed_batch: List[Image.Image] = []
-            for idx, img in enumerate(reference_batch):
-                if idx == 0:
-                    processed_batch.append(self._prepare_reference(img))
-                else:
-                    processed_batch.append(self._prepare_aux_image(img))
-
-            reference = processed_batch[0]
+            reference = self._prepare_reference(reference_images[view_idx])
+            processed_batch = [reference]
 
             LOGGER.info(
                 "Qwen stylising view %d/%d (azimuth=%.2f°, elevation=%.2f°)",
@@ -206,12 +196,7 @@ class QwenEditQuantPipelineWrapper:
                 camera_elevations[view_idx],
             )
 
-            if len(processed_batch) > 1:
-                prompt_payload = (
-                    f"{prompt_text} 第二张输入是位置或边界参考图，请保持主体紧贴其中的轮廓。"
-                )
-            else:
-                prompt_payload = prompt_text
+            prompt_payload = prompt_text
 
             generator = None
             if seed != -1:
@@ -260,8 +245,14 @@ class QwenEditQuantPipelineWrapper:
             composed = f"{template} {instruction}"
 
         if base_prompt:
-            return f"{base_prompt.rstrip('.')}. {composed}"
-        return composed
+            composed_text = f"{base_prompt.rstrip('.')}. {composed}"
+        else:
+            composed_text = composed
+
+        if self.use_control:
+            composed_text = f"{composed_text} 请保持主体贴合参考边界。"
+
+        return composed_text
 
     @staticmethod
     def _view_key(azimuth: float, elevation: float) -> str:
@@ -279,11 +270,4 @@ class QwenEditQuantPipelineWrapper:
             return "back"
         return "left"
 
-    def _prepare_aux_image(self, image: Image.Image) -> Image.Image:
-        if not isinstance(image, Image.Image):
-            raise TypeError(f"Expected PIL.Image, received {type(image).__name__}")
-        aux = image.convert("RGB")
-        if self.reference_size:
-            aux = aux.resize((self.reference_size, self.reference_size), Image.NEAREST)
-        return aux
 

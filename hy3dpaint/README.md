@@ -26,7 +26,7 @@ python3 demo.py
 - Set `Hunyuan3DPaintConfig(multiview_pretrained_path="qwen-edit-quant")` and provide the quantized base model identifier by assigning `config.qwen_edit_base_model` (for example, a local AWQ/GPTQ Qwen image-edit checkpoint).
 - Place the LoRA weights `Qwen-Edit-2509-Multiple-angles.safetensors` and `Qwen-Image-Lightning.safetensors` inside `weights/loras/` (override `config.qwen_edit_lora_paths` if you store them elsewhere).
 - The wrapper produces the six canonical camera angles via Qwen; if more than six views are requested the remaining views are generated automatically with the MVAdapter fallback so downstream baking continues to work.
-- Position maps are fed into Qwen’s native ControlNet slot by default; adjust `qwen_edit_control_scale` or disable via CLI flags if you want pure text/image editing.
+- Position maps are blended into the reference image by default to guide view consistency; use `--qwen_edit_disable_control` if you prefer pure text/image editing.
 - All other pipeline settings (PBR baking, upscaling, unwrap options) remain unchanged.
 
 ## Training
