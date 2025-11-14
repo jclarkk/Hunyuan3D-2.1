@@ -207,10 +207,9 @@ class QwenEditQuantPipelineWrapper:
             )
 
             if len(processed_batch) > 1:
-                prompt_payload: Union[str, List[str]] = [
-                    prompt_text,
-                    "第二张输入是位置或边界参考图，请保持主体紧贴其中的轮廓。",
-                ]
+                prompt_payload = (
+                    f"{prompt_text} 第二张输入是位置或边界参考图，请保持主体紧贴其中的轮廓。"
+                )
             else:
                 prompt_payload = prompt_text
 
