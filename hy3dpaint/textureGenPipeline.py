@@ -583,13 +583,13 @@ class Hunyuan3DPaintPipeline:
             upscaler = AuraSRUpscalerPipeline.from_pretrained()
         elif upscale_model == 'NMKD':
             from hy3dpaint.upscalers.pipelines import NMKDSiaxUpscalerPipeline
-            upscaler = NMKDSiaxUpscalerPipeline.from_pretrained(self.config.device)
+            upscaler = NMKDSiaxUpscalerPipeline.from_pretrained(self.config.device, texture_size=texture_size)
         elif upscale_model == 'Flux':
             from hy3dpaint.upscalers.pipelines import FluxUpscalerPipeline
             upscaler = FluxUpscalerPipeline.from_pretrained(self.config.device)
         elif upscale_model == 'Topaz':
             from hy3dpaint.upscalers.pipelines import TopazAPIUpscalerPipeline
-            upscaler = TopazAPIUpscalerPipeline()
+            upscaler = TopazAPIUpscalerPipeline(texture_size=texture_size)
         else:
             upscaler = None
 
