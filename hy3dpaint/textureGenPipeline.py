@@ -14,19 +14,17 @@
 
 import gc
 import os
-import logging
 import torch
 import copy
 import time
 import trimesh
 import numpy as np
-from PIL import Image, ImageOps, ImageFilter
-from typing import Dict, List, Optional, Union
+from PIL import Image
+from typing import List
 from DifferentiableRenderer.MeshRender import MeshRender
 from hy3dpaint.mvadapter.pipeline import MVAdapterPipelineWrapper
 from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_i2mv_sdxl import MVAdapterI2MVSDXLPipeline
 from hy3dpaint.mvadapter.pipelines.pipeline_mvadapter_t2mv_sdxl import MVAdapterT2MVSDXLPipeline
-from hy3dpaint.qwenedit.pipeline import QwenEditQuantPipelineWrapper
 from utils.multiview_utils import multiviewDiffusionNet, MetalRoughnessOnlyNet
 from utils.pipeline_utils import ViewProcessor
 import warnings
@@ -35,8 +33,6 @@ warnings.filterwarnings("ignore")
 from diffusers.utils import logging as diffusers_logging
 
 diffusers_logging.set_verbosity(50)
-
-LOGGER = logging.getLogger(__name__)
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"
 
@@ -72,49 +68,14 @@ def delete_model_and_cleanup(model_dict, key):
         aggressive_memory_cleanup()
 
 
-def _resolve_torch_dtype(dtype: Optional[Union[str, torch.dtype]]) -> Optional[torch.dtype]:
-    if dtype is None:
-        return None
-    if isinstance(dtype, torch.dtype):
-        return dtype
-
-    dtype_str = str(dtype).lower()
-    mapping = {
-        "float16": torch.float16,
-        "fp16": torch.float16,
-        "half": torch.float16,
-        "bfloat16": torch.bfloat16,
-        "bf16": torch.bfloat16,
-        "float32": torch.float32,
-        "fp32": torch.float32,
-    }
-    return mapping.get(dtype_str, None)
-
-
 class Hunyuan3DPaintConfig:
-    def __init__(
-        self,
-        hypaint_resolution: int = 1024,
-        local_files_only: bool = False,
-        optimization_level: str = "balanced",
-        multiview_pretrained_path: str = "tencent/Hunyuan3D-2.1",
-        qwen_edit_base_model: Optional[str] = None,
-        qwen_edit_lora_paths: Optional[List[str]] = None,
-        qwen_edit_negative_prompt: Optional[str] = None,
-        qwen_edit_guidance_scale: float = 4.5,
-        qwen_edit_strength: float = 0.6,
-        qwen_edit_num_inference_steps: int = 30,
-        qwen_edit_custom_pipeline: Optional[str] = None,
-        qwen_edit_dtype: Optional[Union[str, torch.dtype]] = torch.bfloat16,
-        qwen_edit_fuse_lora: bool = True,
-        qwen_edit_use_control: bool = True,
-    ) -> None:
+    def __init__(self, hypaint_resolution, local_files_only=False, optimization_level="balanced") -> None:
         self.device = "cuda"
         self.local_files_only = local_files_only
 
         self.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
         self.custom_pipeline = "hunyuanpaintpbr"
-        self.multiview_pretrained_path = multiview_pretrained_path
+        self.multiview_pretrained_path = "tencent/Hunyuan3D-2.1"
         self.dino_ckpt_path = "facebook/dinov2-giant"
 
         self.raster_mode = "cr"
@@ -142,43 +103,6 @@ class Hunyuan3DPaintConfig:
         self.optimization_level = optimization_level
         self.continuous_inference = True
 
-        # Quantized Qwen edit defaults
-        self.qwen_edit_base_model = qwen_edit_base_model
-        self.qwen_edit_lora_paths = qwen_edit_lora_paths or [
-            os.path.join("weights", "loras", "Qwen-Edit-2509-Multiple-angles.safetensors"),
-            os.path.join("weights", "loras", "Qwen-Image-Lightning.safetensors"),
-        ]
-        self.qwen_edit_negative_prompt = qwen_edit_negative_prompt or (
-            "watermark, ugly, deformed, noisy, blurry, low contrast, baked lighting, ambient occlusion, shadow artifacts"
-        )
-        self.qwen_edit_guidance_scale = qwen_edit_guidance_scale
-        self.qwen_edit_strength = qwen_edit_strength
-        self.qwen_edit_num_inference_steps = qwen_edit_num_inference_steps
-        self.qwen_edit_primary_view_count = 6
-        self.qwen_edit_reference_size = 1024
-        self.qwen_edit_prompt_template = "高质量3D参考图，{}"
-        self.qwen_edit_custom_pipeline = qwen_edit_custom_pipeline
-        self.qwen_edit_dtype = _resolve_torch_dtype(qwen_edit_dtype)
-        self.qwen_edit_fuse_lora = qwen_edit_fuse_lora
-        self.qwen_edit_use_control = qwen_edit_use_control
-        self.qwen_edit_camera_prompts: Dict[str, str] = {
-            "front": "保持镜头正面对准主体。",
-            "right": "将镜头向右旋转90度。",
-            "back": "将镜头向后旋转180度观看主体背面。",
-            "left": "将镜头向左旋转90度。",
-            "top": "将镜头转为俯视视角。",
-            "bottom": "将镜头转为仰视视角。",
-        }
-        self.qwen_edit_pipeline_kwargs: Dict[str, object] = {
-            "trust_remote_code": True,
-            "use_safetensors": True,
-            "low_cpu_mem_usage": True,
-        }
-        if self.qwen_edit_custom_pipeline:
-            self.qwen_edit_pipeline_kwargs.setdefault("custom_pipeline", self.qwen_edit_custom_pipeline)
-        if self.qwen_edit_dtype is not None:
-            self.qwen_edit_pipeline_kwargs["torch_dtype"] = self.qwen_edit_dtype
-
 
 class Hunyuan3DPaintPipeline:
 
@@ -195,179 +119,6 @@ class Hunyuan3DPaintPipeline:
         self.view_processor = ViewProcessor(self.config, self.render)
         self.load_models()
 
-    def _ensure_mvadapter_fallback(self):
-        model = self.models.get("mv_adapter_fallback")
-        if model is None:
-            print("Loading MVAdapter fallback pipeline...")
-            model = MVAdapterPipelineWrapper.from_pretrained(
-                device=self.config.device,
-                local_files_only=self.config.local_files_only,
-                model_cls=MVAdapterI2MVSDXLPipeline,
-            )
-            self.models["mv_adapter_fallback"] = model
-        else:
-            model.to(self.config.device)
-        return model
-
-    def _generate_additional_views_with_mvadapter(
-        self,
-        mesh,
-        image_prompt,
-        normal_maps,
-        position_maps,
-        camera_elevations,
-        camera_azimuths,
-        seed,
-    ):
-        if not normal_maps:
-            return []
-
-        mv_adapter = self._ensure_mvadapter_fallback()
-        reference_image = image_prompt
-        if isinstance(image_prompt, list):
-            reference_image = image_prompt[0] if image_prompt else None
-
-        view_count = len(camera_elevations)
-        result = mv_adapter(
-            mesh,
-            image_prompt=reference_image,
-            normal_maps=normal_maps,
-            position_maps=position_maps,
-            camera_elevation_deg=camera_elevations,
-            camera_azimuth_deg=camera_azimuths,
-            num_views=view_count,
-            seed=seed,
-            height=self.config.hypaint_resolution,
-            width=self.config.hypaint_resolution,
-            use_mesh_renderer=False,
-        )
-
-        albedo = (result or {}).get("albedo", [])[:view_count]
-
-        if self.config.continuous_inference:
-            move_model_to_cpu(self.models["mv_adapter_fallback"])
-        else:
-            delete_model_and_cleanup(self.models, "mv_adapter_fallback")
-
-        return albedo
-
-    def _select_reference_image(self, image_prompt, view_idx):
-        if isinstance(image_prompt, list):
-            if not image_prompt:
-                raise ValueError("image_prompt list is empty.")
-            idx = min(view_idx, len(image_prompt) - 1)
-            return image_prompt[idx]
-        return image_prompt
-
-    def _prepare_base_reference(self, image):
-        base = image.convert("RGB")
-        if self.config.qwen_edit_reference_size:
-            size = (self.config.qwen_edit_reference_size, self.config.qwen_edit_reference_size)
-            base = base.resize(size, Image.BICUBIC)
-        return base
-
-    def _create_boundary_image(self, position_image, target_size):
-        pos = position_image.convert("L")
-        pos = ImageOps.autocontrast(pos)
-        if pos.size != target_size:
-            pos = pos.resize(target_size, Image.NEAREST)
-        edges = pos.filter(ImageFilter.FIND_EDGES)
-        edges = ImageOps.autocontrast(edges)
-        colored = ImageOps.colorize(edges, black=(0, 0, 0), white=(255, 64, 64))
-        return colored
-
-    def _run_pbr_generation(self, multiviews, normal_maps, position_maps):
-        print("Preparing for PBR generation...")
-
-        albedo_views_cpu = [img.copy() for img in multiviews["albedo"]]
-
-        if self.config.continuous_inference and "multiview_model" in self.models:
-            print("Moving multiview model to CPU...")
-            move_model_to_cpu(self.models["multiview_model"])
-        elif "multiview_model" in self.models:
-            print("Deleting multiview model...")
-            delete_model_and_cleanup(self.models, "multiview_model")
-
-        del multiviews
-
-        aggressive_memory_cleanup()
-        time.sleep(1)
-
-        print(f"GPU memory before PBR: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB allocated")
-
-        t2 = time.time()
-        print("Loading PBR model...")
-        self.models["pbr_model"] = MetalRoughnessOnlyNet(self.config)
-
-        mr_views = self._execute_pbr_batches(albedo_views_cpu, normal_maps, position_maps)
-
-        for i in range(len(mr_views["mr"])):
-            mr_views["mr"][i] = mr_views["mr"][i].resize(
-                (self.config.hypaint_resolution, self.config.hypaint_resolution)
-            )
-
-        result = {
-            "albedo": albedo_views_cpu,
-            "mr": mr_views["mr"],
-        }
-
-        delete_model_and_cleanup(self.models, "pbr_model")
-
-        if self.config.continuous_inference and "multiview_model" in self.models:
-            print("Restoring multiview model to GPU...")
-            self.models["multiview_model"].to(self.config.device)
-
-        t3 = time.time()
-        print(f"PBR generation took {t3 - t2:.2f} seconds")
-
-        return result
-
-    def _execute_pbr_batches(self, albedo_views_cpu, normal_maps, position_maps):
-        view_count = len(albedo_views_cpu)
-
-        if (
-            view_count > 6
-            and getattr(self.config, "optimization_level", "balanced") == "aggressive"
-        ):
-            mr_views_list = []
-            for i in range(0, view_count, 6):
-                batch_end = min(i + 6, view_count)
-                batch_albedo = albedo_views_cpu[i:batch_end]
-                batch_normal = normal_maps[i:batch_end]
-                batch_position = position_maps[i:batch_end]
-
-                if len(batch_albedo) < 6:
-                    pad_count = 6 - len(batch_albedo)
-                    batch_albedo += [batch_albedo[-1]] * pad_count
-                    batch_normal += [batch_normal[-1]] * pad_count
-                    batch_position += [batch_position[-1]] * pad_count
-
-                with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
-                    batch_mr = self.models["pbr_model"](
-                        batch_albedo[0],
-                        batch_normal + batch_position,
-                        prompt="material roughness and metallic map",
-                        custom_view_size=512,
-                        resize_input=True,
-                    )
-
-                mr_views_list.extend(batch_mr["mr"][: batch_end - i])
-                aggressive_memory_cleanup()
-
-            return {"mr": mr_views_list[:view_count]}
-
-        with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
-            mr_views = self.models["pbr_model"](
-                albedo_views_cpu[0],
-                normal_maps + position_maps,
-                prompt="material roughness and metallic map",
-                custom_view_size=512,
-                resize_input=True,
-            )
-
-        return mr_views
-
-
     def load_models(self):
         torch.cuda.empty_cache()
         if self.config.multiview_pretrained_path == "tencent/Hunyuan3D-2.1":
@@ -381,11 +132,6 @@ class Hunyuan3DPaintPipeline:
             self.models["multiview_model"] = MVAdapterPipelineWrapper.from_pretrained(device=self.config.device,
                                                                                       local_files_only=self.config.local_files_only,
                                                                                       model_cls=MVAdapterT2MVSDXLPipeline)
-        elif self.config.multiview_pretrained_path == "qwen-edit-quant":
-            self.models["multiview_model"] = QwenEditQuantPipelineWrapper.from_config(
-                self.config, device=self.config.device
-            )
-            self.models["mv_adapter_fallback"] = None
 
         print("Models Loaded.")
 
@@ -480,66 +226,10 @@ class Hunyuan3DPaintPipeline:
                 resize_input=True,
             )
 
-        elif self.config.multiview_pretrained_path == "qwen-edit-quant":
-            if not image_prompt:
-                raise ValueError("Image prompt is required for qwen-edit-quant pipeline.")
-
-            qwen_wrapper = self.models["multiview_model"]
-            LOGGER.info("Moving Qwen pipeline to GPU for stylisation")
-            qwen_wrapper = qwen_wrapper.to(self.config.device)
-            self.models["multiview_model"] = qwen_wrapper
-
-            reference_batches = []
-            for view_idx in range(num_views):
-                base_image = self._select_reference_image(image_prompt, view_idx)
-                if self.config.qwen_edit_use_control and view_idx < len(position_maps):
-                    boundary_image = self._create_boundary_image(position_maps[view_idx], base_image)
-                    batch = [self._prepare_base_reference(base_image), boundary_image]
-                else:
-                    batch = [self._prepare_base_reference(base_image)]
-                reference_batches.append(batch)
-
-            primary_views = qwen_wrapper(
-                reference_batches,
-                prompt,
-                selected_camera_elevs,
-                selected_camera_azims,
-                num_views=num_views,
-                seed=seed,
-                negative_prompt=self.config.qwen_edit_negative_prompt,
-            )
-            LOGGER.info("Moving Qwen pipeline back to CPU")
-            qwen_wrapper = qwen_wrapper.to("cpu")
-            self.models["multiview_model"] = qwen_wrapper
-            aggressive_memory_cleanup()
-
-            if len(primary_views) < num_views:
-                remaining = num_views - len(primary_views)
-                LOGGER.info("Generating %d additional fallback view(s) via MVAdapter", remaining)
-                extra_views = self._generate_additional_views_with_mvadapter(
-                    mesh,
-                    image_prompt,
-                    normal_maps[len(primary_views):],
-                    position_maps[len(primary_views):],
-                    selected_camera_elevs[len(primary_views):],
-                    selected_camera_azims[len(primary_views):],
-                    seed,
-                )
-                primary_views.extend(extra_views)
-                while len(primary_views) < num_views and primary_views:
-                    primary_views.append(primary_views[-1])
-
-            multiviews = {"albedo": primary_views[:num_views]}
-
-            t1 = time.time()
-            print(f"Qwen multiview generation took {t1 - t0:.2f} seconds")
-
-            if pbr:
-                multiviews = self._run_pbr_generation(multiviews, normal_maps, position_maps)
-
         elif self.config.multiview_pretrained_path in ["mv-adapter", "mv-adapter-t2mv"]:
+            ############  Multiview  ##########
             if self.config.multiview_pretrained_path == "mv-adapter":
-                multiviews = self.models["multiview_model"](
+                multiviews = self.models['multiview_model'](
                     mesh,
                     image_prompt[0],
                     normal_maps=normal_maps,
@@ -548,10 +238,10 @@ class Hunyuan3DPaintPipeline:
                     camera_azimuth_deg=selected_camera_azims,
                     num_views=num_views,
                     seed=seed,
-                    use_mesh_renderer=False,
+                    use_mesh_renderer=False
                 )
             else:  # mv-adapter-t2mv
-                multiviews = self.models["multiview_model"](
+                multiviews = self.models['multiview_model'](
                     mesh,
                     normal_maps=normal_maps,
                     position_maps=position_maps,
@@ -560,14 +250,106 @@ class Hunyuan3DPaintPipeline:
                     camera_azimuth_deg=selected_camera_azims,
                     num_views=num_views,
                     seed=seed,
-                    use_mesh_renderer=False,
+                    use_mesh_renderer=False
                 )
 
             t1 = time.time()
             print(f"Multiview generation took {t1 - t0:.2f} seconds")
 
             if pbr:
-                multiviews = self._run_pbr_generation(multiviews, normal_maps, position_maps)
+                print("Preparing for PBR generation...")
+
+                # Store albedo views in CPU memory to free GPU
+                albedo_views_cpu = [img.copy() for img in multiviews['albedo']]
+
+                # Aggressive cleanup before loading PBR model
+                if self.config.continuous_inference:
+                    print("Moving multiview model to CPU...")
+                    move_model_to_cpu(self.models['multiview_model'])
+                else:
+                    print("Deleting multiview model...")
+                    delete_model_and_cleanup(self.models, 'multiview_model')
+
+                # Additional cleanup
+                del multiviews
+                aggressive_memory_cleanup()
+
+                # Wait a moment for memory to be fully released
+                time.sleep(1)
+
+                # Print memory status
+                print(f"GPU memory before PBR: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB allocated")
+
+                t2 = time.time()
+
+                # Load PBR model with optimizations
+                print("Loading PBR model...")
+                self.models['pbr_model'] = MetalRoughnessOnlyNet(self.config)
+
+                mr_views = None
+                # Process in smaller batches if needed
+                if len(albedo_views_cpu) > 6 and self.config.optimization_level == "aggressive":
+                    # Process PBR in batches to save memory
+                    mr_views_list = []
+                    for i in range(0, len(albedo_views_cpu), 6):
+                        batch_end = min(i + 6, len(albedo_views_cpu))
+                        batch_albedo = albedo_views_cpu[i:batch_end]
+                        batch_normal = normal_maps[i:batch_end]
+                        batch_position = position_maps[i:batch_end]
+
+                        if len(batch_albedo) < 6:
+                            # Pad to 6
+                            pad_count = 6 - len(batch_albedo)
+                            batch_albedo += [batch_albedo[-1]] * pad_count
+                            batch_normal += [batch_normal[-1]] * pad_count
+                            batch_position += [batch_position[-1]] * pad_count
+
+                        with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
+                            batch_mr = self.models["pbr_model"](
+                                batch_albedo[0],
+                                batch_normal + batch_position,
+                                prompt="material roughness and metallic map",
+                                custom_view_size=512,
+                                resize_input=True,
+                            )
+
+                        mr_views_list.extend(batch_mr["mr"][:batch_end - i])
+                        aggressive_memory_cleanup()
+
+                    mr_views = {"mr": mr_views_list[:len(albedo_views_cpu)]}
+                else:
+                    with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
+                        # Process all at once
+                        mr_views = self.models["pbr_model"](
+                            albedo_views_cpu[0],
+                            normal_maps + position_maps,
+                            prompt="material roughness and metallic map",
+                            custom_view_size=512,
+                            resize_input=True,
+                        )
+
+                # Resize the MR views to match the albedo views resolution
+                for i in range(len(mr_views["mr"])):
+                    mr_views["mr"][i] = mr_views["mr"][i].resize(
+                        (self.config.hypaint_resolution, self.config.hypaint_resolution))
+
+                # Recreate multiviews dict with CPU albedo and new MR
+                multiviews = {
+                    "albedo": albedo_views_cpu,
+                    "mr": mr_views["mr"]
+                }
+
+                # Clean up PBR model
+                delete_model_and_cleanup(self.models, 'pbr_model')
+
+                # Restore multiview model if continuous inference
+                if self.config.continuous_inference:
+                    print("Restoring multiview model to GPU...")
+                    self.models['multiview_model'].to(self.config.device)
+
+                t3 = time.time()
+                print(f"PBR generation took {t3 - t2:.2f} seconds")
+
         else:
             raise ValueError("Unsupported multiview model path: {}".format(self.config.multiview_pretrained_path))
 

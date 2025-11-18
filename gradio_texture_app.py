@@ -71,14 +71,8 @@ args = parser.parse_args()
 
 # Init texture generation pipeline
 conf = Hunyuan3DPaintConfig(
-    hypaint_resolution=1024,
-    qwen_edit_base_model=args.qwen_edit_base_model,
-    qwen_edit_use_control=not args.qwen_edit_disable_control,
+    hypaint_resolution=1024
 )
-if args.qwen_edit_dtype:
-    conf.qwen_edit_dtype = args.qwen_edit_dtype
-if args.qwen_edit_disable_fuse_lora:
-    conf.qwen_edit_fuse_lora = False
 conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
 conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
 conf.multiview_pretrained_path = args.texgen_model_path

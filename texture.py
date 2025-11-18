@@ -45,14 +45,8 @@ def run(args):
     t2 = time.time()
     # Load models
     conf = Hunyuan3DPaintConfig(
-        hypaint_resolution=1024,
-        qwen_edit_base_model=args.qwen_edit_base_model,
-        qwen_edit_use_control=not args.qwen_edit_disable_control,
+        hypaint_resolution=1024
     )
-    if args.qwen_edit_dtype:
-        conf.qwen_edit_dtype = args.qwen_edit_dtype
-    if args.qwen_edit_disable_fuse_lora:
-        conf.qwen_edit_fuse_lora = False
     conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
     conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
     conf.multiview_pretrained_path = args.texgen_model_path
@@ -127,13 +121,6 @@ if __name__ == "__main__":
     parser.add_argument('--unwrap_method', type=str,
                         help='UV unwrap method. Must be either "xatlas", "open3d" or "bpy"', default='xatlas')
     parser.add_argument("--texgen_model_path", type=str, default='tencent/Hunyuan3D-2.1')
-    parser.add_argument("--qwen_edit_base_model", type=str, default=None, help='Qwen edit base model')
-    parser.add_argument("--qwen_edit_disable_control", action="store_true",
-                        help="Disable passing position ControlNet maps to Qwen.")
-    parser.add_argument("--qwen_edit_dtype", type=str, default=None,
-                        help="Optional dtype override for the Qwen pipeline (e.g. 'float16').")
-    parser.add_argument("--qwen_edit_disable_fuse_lora", action="store_true",
-                        help="Disable LoRA fusion inside the Qwen pipeline.")
     parser.add_argument('--upscale_model', type=str, default=None, help='Upscale model to use')
     parser.add_argument('--num_views', type=int, help='Number of texture projection views', default=8)
     parser.add_argument('--pbr', action='store_true', help='Generate PBR textures', default=False)
