@@ -1,10 +1,11 @@
-import numpy as np
+import time
+
 import os
 import requests
-import time
 import torch
 from PIL import Image
 from io import BytesIO
+from typing import Union
 
 
 class FluxUpscalerPipeline:
@@ -165,8 +166,10 @@ class TopazAPIUpscalerPipeline:
 
 
 class GeminiAPIPipeline:
-    def __init__(self, input_image: Image.Image):
-        self.original_input_image = input_image
+    def __init__(self, original_input_image: Union[str, Image.Image]):
+        self.original_input_image = original_input_image
+        if type(self.original_input_image) is str:
+            self.original_input_image = Image.open(self.original_input_image)
 
         genai_key = os.getenv('GOOGLE_GENAI_KEY')
         if not genai_key:
@@ -183,9 +186,10 @@ class GeminiAPIPipeline:
         elif resolution in [4096, 6144, 8192]:
             google_resolution = "4K"
 
-        contents = [f"Upscale the image quality while maintaining pixel perfect object position from the first image. The second provided image is the ground truth reference for the object details. You must preserve the original colors and details of the second image exactly as they are.",
-                    input_image,
-                    self.original_input_image]
+        contents = [
+            f"Upscale the image quality while maintaining pixel perfect object position from the first image. The second provided image is the ground truth reference for the object details. You must preserve the original colors and details of the second image exactly as they are.",
+            input_image,
+            self.original_input_image]
 
         from google.genai import types
 
@@ -210,6 +214,5 @@ class GeminiAPIPipeline:
 
         if resolution in [6144, 8192]:
             output_image = output_image.resize((resolution, resolution), Image.LANCZOS)
-
 
         return output_image

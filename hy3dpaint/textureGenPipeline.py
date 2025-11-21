@@ -374,7 +374,7 @@ class Hunyuan3DPaintPipeline:
             upscaler = TopazAPIUpscalerPipeline(texture_size=texture_size)
         elif upscale_model == 'Gemini':
             from hy3dpaint.upscalers.pipelines import GeminiAPIPipeline
-            upscaler = GeminiAPIPipeline()
+            upscaler = GeminiAPIPipeline(original_input_image=image_prompt[0])
         else:
             upscaler = None
 
