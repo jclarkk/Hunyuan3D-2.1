@@ -1,3 +1,4 @@
+import shutil
 import time
 
 import os
@@ -178,7 +179,7 @@ class GeminiAPIPipeline:
         from google import genai
         self.client = genai.Client(api_key=genai_key)
 
-    def __call__(self, input_image: Image.Image, resolution=1024) -> str:
+    def __call__(self, input_image: Image.Image, resolution=1024) -> Image.Image:
 
         google_resolution = "1K"
         if resolution == 2048:
@@ -215,6 +216,7 @@ class GeminiAPIPipeline:
                 os.makedirs("tmp/", exist_ok=True)
                 image.save("tmp/gemini_upscaled.png")
                 output_image = Image.open("tmp/gemini_upscaled.png")
+                shutil.rmtree("tmp/", ignore_errors=True)
 
         if output_image is None:
             raise RuntimeError("Failed to upscale image; no image returned from Gemini API")
