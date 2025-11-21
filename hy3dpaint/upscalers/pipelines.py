@@ -178,7 +178,7 @@ class GeminiAPIPipeline:
         from google import genai
         self.client = genai.Client(api_key=genai_key)
 
-    def upscale_image(self, input_image: Image.Image, resolution=1024) -> str:
+    def __call__(self, input_image: Image.Image, resolution=1024) -> str:
 
         google_resolution = "1K"
         if resolution == 2048:
