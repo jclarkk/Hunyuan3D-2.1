@@ -207,7 +207,9 @@ class GeminiAPIPipeline:
         output_image = None
         for part in response.parts:
             if image := part.as_image():
-                output_image = image
+                os.makedirs("tmp/", exist_ok=True)
+                image.save("tmp/gemini_upscaled.png")
+                output_image = Image.open("tmp/gemini_upscaled.png")
 
         if output_image is None:
             raise RuntimeError("Failed to upscale image; no image returned from Gemini API")
