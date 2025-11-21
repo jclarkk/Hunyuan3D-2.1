@@ -187,7 +187,12 @@ class GeminiAPIPipeline:
             google_resolution = "4K"
 
         contents = [
-            f"Upscale the image quality while maintaining pixel perfect object position from the first image. The second provided image is the ground truth reference for the object details. You must preserve the original colors and details of the second image exactly as they are. If the second image has text then please use it since the first image may have messed it up.",
+            f"Upscale the image quality while maintaining pixel perfect object position from the first image. "
+            f"The aspect ratio must remain the same. The object in the first image must not be distorted in any way. ",
+            f"The object position, translation, zoom and shape in the first image must be preserved exactly as it is. ",
+            f"The second provided image is the ground truth reference for the object details. "
+            f"You must preserve the original colors and details of the second image exactly as they are. "
+            f"If the second image has text then please use it since the first image may have messed it up.",
             input_image,
             self.original_input_image]
 
