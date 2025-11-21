@@ -60,13 +60,6 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--host', type=str, default='0.0.0.0')
 parser.add_argument('--port', type=int, default=8080)
 parser.add_argument('--texgen_model_path', type=str, default='tencent/Hunyuan3D-2.1')
-parser.add_argument("--qwen_edit_base_model", type=str, default=None, help='Qwen edit base model')
-parser.add_argument("--qwen_edit_disable_control", action="store_true",
-                    help="Disable passing position ControlNet maps to Qwen.")
-parser.add_argument("--qwen_edit_dtype", type=str, default=None,
-                    help="Optional dtype override for the Qwen pipeline (e.g. 'float16').")
-parser.add_argument("--qwen_edit_disable_fuse_lora", action="store_true",
-                    help="Disable LoRA fusion inside the Qwen pipeline.")
 args = parser.parse_args()
 
 # Init texture generation pipeline
@@ -125,7 +118,7 @@ with gr.Blocks() as demo:
                 uv_unwrap_method = gr.Radio(['xatlas', 'open3d', 'bpy', 'sf'], label='UV Unwrap Method', value='xatlas')
                 texture_size = gr.Slider(1024, 8192, step=1024, value=4096, label="Texture Size")
                 pbr = gr.Checkbox(value=True, label="Enable PBR Texturing")
-                super_resolution = gr.Radio(["None", "NMKD", "Aura", "Flux", "Topaz"],
+                super_resolution = gr.Radio(["None", "NMKD", "Aura", "Flux", "Topaz", "Gemini"],
                                             value="NMKD", label="Super-Resolution")
                 num_views = gr.Slider(6, 24, step=2, value=6, label="Number of Views")
                 submit = gr.Button("Generate Texture")

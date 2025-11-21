@@ -162,3 +162,54 @@ class TopazAPIUpscalerPipeline:
                 response.raise_for_status()
 
         raise Exception("Topaz sync upscaling failed after retries.")
+
+
+class GeminiAPIPipeline:
+    def __init__(self, input_image: Image.Image):
+        self.original_input_image = input_image
+
+        genai_key = os.getenv('GOOGLE_GENAI_KEY')
+        if not genai_key:
+            raise ValueError("GOOGLE_GENAI_KEY environment variable not set")
+
+        from google import genai
+        self.client = genai.Client(api_key=genai_key)
+
+    def upscale_image(self, input_image: Image.Image, resolution=1024) -> str:
+
+        google_resolution = "1K"
+        if resolution == 2048:
+            google_resolution = "2K"
+        elif resolution in [4096, 6144, 8192]:
+            google_resolution = "4K"
+
+        contents = [f"Upscale the image quality while maintaining pixel perfect object position from the first image. The second provided image is the ground truth reference for the object details. You must preserve the original colors and details of the second image exactly as they are.",
+                    input_image,
+                    self.original_input_image]
+
+        from google.genai import types
+
+        response = self.client.models.generate_content(
+            model="gemini-3-pro-image-preview",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_modalities=['IMAGE'],
+                image_config=types.ImageConfig(
+                    image_size=google_resolution
+                ),
+            )
+        )
+
+        output_image = None
+        for part in response.parts:
+            if image := part.as_image():
+                output_image = image
+
+        if output_image is None:
+            raise RuntimeError("Failed to upscale image; no image returned from Gemini API")
+
+        if resolution in [6144, 8192]:
+            output_image = output_image.resize((resolution, resolution), Image.LANCZOS)
+
+
+        return output_image

@@ -75,3 +75,6 @@ deepspeed
 
 # GPU Inpainting
 simple-lama-inpainting==0.1.2
+
+# Gemini upscaling
+google-genai==1.52.0
