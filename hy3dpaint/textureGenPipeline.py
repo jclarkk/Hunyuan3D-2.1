@@ -180,6 +180,9 @@ class Hunyuan3DPaintPipeline:
         elif unwrap_method == 'sf':
             from utils.uvwrap_utils import sf_mesh_uv_wrap
             mesh = sf_mesh_uv_wrap(mesh)
+        elif unwrap_method == 'cuda_xatlas':
+            from utils.uvwrap_utils import cuda_xatlas_unwrap
+            mesh = cuda_xatlas_unwrap(mesh, resolution=texture_size)
         else:
             raise ValueError(f"Invalid unwrap method {unwrap_method}")
         t1 = time.time()

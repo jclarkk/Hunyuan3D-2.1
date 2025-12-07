@@ -27,8 +27,8 @@ def run(args):
     if args.texture_size not in [1024, 2048, 3072, 4096, 6144, 8192]:
         raise ValueError("Texture size must be one of 1024, 2048, 3072, 4096, 6144, 8192")
 
-    if args.unwrap_method not in ['xatlas', 'open3d', 'bpy', 'sf']:
-        raise ValueError("Unwrap method must be either 'xatlas', 'open3d' or 'bpy' or 'sf'")
+    if args.unwrap_method not in ['xatlas', 'open3d', 'bpy', 'sf', 'cuda_xatlas']:
+        raise ValueError("Unwrap method must be either 'xatlas', 'open3d' or 'bpy' or 'sf' or 'cuda_xatlas'")
 
     t0 = time.time()
     # Load mesh
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     parser.add_argument('--remesh_method', type=str, help='Re-mesh method. Must be either "im" or "bpt" if used.',
                         default=None)
     parser.add_argument('--unwrap_method', type=str,
-                        help='UV unwrap method. Must be either "xatlas", "open3d" or "bpy"', default='xatlas')
+                        help='UV unwrap method. Must be either "xatlas", "open3d" or "bpy" or "sf" or "cuda_xatlas"', default='xatlas')
     parser.add_argument("--texgen_model_path", type=str, default='tencent/Hunyuan3D-2.1')
     parser.add_argument('--upscale_model', type=str, default=None, help='Upscale model to use')
     parser.add_argument('--num_views', type=int, help='Number of texture projection views', default=8)
