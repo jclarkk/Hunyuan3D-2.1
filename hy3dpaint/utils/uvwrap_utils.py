@@ -39,7 +39,7 @@ def cuda_xatlas_unwrap(mesh, padding=2, resolution=1024, max_iterations=4):
         import trimesh
     except ImportError as e:
         raise ImportError(
-            "cumesh.xatlas not found. Install CuMesh (e.g., `pip install CuMesh/`)."
+            "cumesh.xatlas not found. Install CuMesh (e.g., `pip install CuMesh/ --no-build-isolation`)."
         ) from e
 
     # Flatten scenes and ensure triangles (preserve any per-vertex UV/material if present)

@@ -169,18 +169,23 @@ class Hunyuan3DPaintPipeline:
         print('Wrapping UV...')
         t0 = time.time()
         if unwrap_method == 'open3d':
+            print("Using Open3D for UV unwrapping...")
             from utils.uvwrap_utils import open3d_mesh_uv_wrap
             mesh = open3d_mesh_uv_wrap(mesh, resolution=texture_size)
         elif unwrap_method == 'bpy':
+            print("Using Blender (bpy) for UV unwrapping...")
             from utils.uvwrap_utils import bpy_unwrap_mesh
             mesh = bpy_unwrap_mesh(mesh)
         elif unwrap_method == 'xatlas':
+            print("Using XAtlas (xatlas) for UV unwrapping...")
             from utils.uvwrap_utils import mesh_uv_wrap
             mesh = mesh_uv_wrap(mesh, resolution=texture_size)
         elif unwrap_method == 'sf':
+            print("Using StableFast (sf) for UV unwrapping...")
             from utils.uvwrap_utils import sf_mesh_uv_wrap
             mesh = sf_mesh_uv_wrap(mesh)
         elif unwrap_method == 'cuda_xatlas':
+            print("Using CUDA XAtlas (cuda_xatlas) for UV unwrapping...")
             from utils.uvwrap_utils import cuda_xatlas_unwrap
             mesh = cuda_xatlas_unwrap(mesh, resolution=texture_size)
         else:
