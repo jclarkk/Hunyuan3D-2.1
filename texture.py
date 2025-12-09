@@ -50,6 +50,7 @@ def run(args):
     conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
     conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
     conf.multiview_pretrained_path = args.texgen_model_path
+    conf.continuous_inference = False
     texture_pipeline = Hunyuan3DPaintPipeline(conf)
     print('3D Paint pipeline loaded')
 
