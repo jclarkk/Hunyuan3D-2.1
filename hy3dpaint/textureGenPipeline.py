@@ -350,11 +350,6 @@ class Hunyuan3DPaintPipeline:
                 # Clean up PBR model
                 delete_model_and_cleanup(self.models, 'pbr_model')
 
-                # Restore multiview model if continuous inference
-                if self.config.continuous_inference:
-                    print("Restoring multiview model to GPU...")
-                    self.models['multiview_model'].to(self.config.device)
-
                 t3 = time.time()
                 print(f"PBR generation took {t3 - t2:.2f} seconds")
 
@@ -408,6 +403,11 @@ class Hunyuan3DPaintPipeline:
 
         t1 = time.time()
         print(f"Upscaling took {t1 - t0:.2f} seconds")
+
+        # Restore multiview model if continuous inference
+        if self.config.continuous_inference:
+            print("Restoring multiview model to GPU...")
+            self.models['multiview_model'].to(self.config.device)
 
         t0 = time.time()
         ###########  Bake  ##########
