@@ -35,7 +35,7 @@ def run(args):
     mesh = trimesh.load(args.mesh_path, force='mesh')
 
     # Reduce face count
-    face_limit = 500000
+    face_limit = 550000
     if len(mesh.faces) > face_limit:
         raise ValueError(f"Face count must be less than or equal to {face_limit}")
 
