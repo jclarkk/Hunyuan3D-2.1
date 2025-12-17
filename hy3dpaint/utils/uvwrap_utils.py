@@ -24,144 +24,90 @@ def cuda_xatlas_unwrap(mesh, padding=2, resolution=1024, max_iterations=4):
     UV unwrap using the CUDA-backed xatlas binding (cumesh.xatlas).
 
     Args:
-        mesh (trimesh.Trimesh | trimesh.Scene): Input mesh (tri or not).
-        padding (int): Pixel padding between islands.
-        resolution (int): Target square atlas resolution.
+        mesh (trimesh.Trimesh | trimesh.Scene): Input mesh.
+        padding (int): Pixel padding between islands (chart separation).
+        resolution (int): Target square atlas resolution (used for padding calc).
         max_iterations (int): Chart growing/seeding iterations (higher = better, slower).
 
     Returns:
         trimesh.Trimesh: New mesh with reindexed vertices/faces and mesh.visual.uv set.
     """
     try:
-        from cumesh.xatlas import Atlas  # your provided wrapper
+        # We import CuMesh here as per the reference logic provided
+        import cumesh
         import torch
-        import numpy as np
-        import trimesh
     except ImportError as e:
         raise ImportError(
-            "cumesh.xatlas not found. Install CuMesh (e.g., `pip install CuMesh/ --no-build-isolation`)."
+            "cumesh not found. Install CuMesh (e.g., `pip install CuMesh/ --no-build-isolation`)."
         ) from e
 
-    # Flatten scenes and ensure triangles (preserve any per-vertex UV/material if present)
+    # --- 1. Data Preparation ---
+    # Handle Scene vs Trimesh
     if isinstance(mesh, trimesh.Scene):
-        mesh = mesh.dump(concatenate=True)
+        # Concatenate scene into a single mesh for unwrapping
+        mesh = trimesh.util.concatenate(
+            tuple(trimesh.Trimesh(vertices=g.vertices, faces=g.faces)
+                  for g in mesh.geometry.values())
+        )
+
+    # Ensure mesh is a Trimesh object
     if not isinstance(mesh, trimesh.Trimesh):
-        raise TypeError("cuda_xatlas_unwrap expects a trimesh.Trimesh or trimesh.Scene")
+        raise ValueError(f"Input must be trimesh.Trimesh or trimesh.Scene, got {type(mesh)}")
 
-    tm = mesh
-    if not (hasattr(tm, "faces") and tm.faces is not None and tm.faces.ndim == 2 and tm.faces.shape[1] == 3):
-        tm = ensure_triangles(tm)
+    vertices = torch.from_numpy(mesh.vertices).float().cuda()
+    faces = torch.from_numpy(mesh.faces).int().cuda()
 
-    # Heuristics for big meshes (helps speed/robustness)
-    face_count = int(len(tm.faces))
-    rotate_charts = True
-    if face_count > 100_000:
-        rotate_charts = False  # avoid extra work on very large meshes
+    # --- 2. CuMesh Initialization ---
+    # The reference logic initializes CuMesh with the vertices/faces
+    cm = cumesh.CuMesh()
+    cm.init(vertices, faces)
 
-    # Prepare CPU tensors in the dtypes/layout expected by the wrapper
-    V_np = np.asarray(tm.vertices, dtype=np.float32, order="C")
-    F_np = np.asarray(tm.faces, dtype=np.int32, order="C")
+    # --- 3. UV Unwrapping ---
+    # We map the function arguments to the kwargs expected by cumesh/xatlas.
+    # Note: 'padding' and 'resolution' usually go into pack_charts,
+    # while 'max_iterations' affects the chart generation.
 
-    V = torch.from_numpy(V_np)  # [V,3], float32, CPU, contiguous
-    F = torch.from_numpy(F_np)  # [F,3], int32,  CPU, contiguous
-
-    # Optionally pass normals as hints—compute if not present
-    normals_np = None
-    try:
-        if getattr(tm, "_vertex_normals", None) is not None and len(tm._vertex_normals) == len(V_np):
-            normals_np = np.asarray(tm._vertex_normals, dtype=np.float32, order="C")
-        elif getattr(getattr(tm, "vertex_normals", None), "__array__", None) is not None:
-            n_tmp = np.asarray(tm.vertex_normals, dtype=np.float32)
-            if len(n_tmp) == len(V_np):
-                normals_np = np.ascontiguousarray(n_tmp, dtype=np.float32)
-    except Exception:
-        normals_np = None
-
-    if normals_np is None:
-        # CPU torch normals (wrapper requires CPU anyway)
-        v_pos = torch.from_numpy(V_np.copy())
-        t_pos_idx = torch.from_numpy(F_np.copy().astype(np.int64))
-        nrm = _torch_vertex_normals(v_pos, t_pos_idx).contiguous().to(torch.float32)
-        normals_np = nrm.numpy()
-
-    N = torch.from_numpy(normals_np)  # [V,3], float32, CPU
-
-    # If the source had UVs, we can pass them as hints (optional)
-    UV_hint = None
-    try:
-        if getattr(getattr(tm, "visual", None), "uv", None) is not None:
-            uv_arr = np.asarray(tm.visual.uv, dtype=np.float32)
-            if uv_arr.shape[0] == V_np.shape[0] and uv_arr.shape[1] == 2:
-                UV_hint = torch.from_numpy(np.ascontiguousarray(uv_arr, dtype=np.float32))
-    except Exception:
-        UV_hint = None
-
-    # Build atlas and add the mesh
-    atlas = Atlas()
-    atlas.add_mesh(V, F, N, UV_hint)
-
-    # Chart (parameterization) options — tuned for quality/speed balance
-    # You can surface these as function args if you want finer control.
-    atlas.compute_charts(
-        max_chart_area=0.0,
-        max_boundary_length=0.0,
-        normal_deviation_weight=2.0,
-        roundness_weight=0.01,
-        straightness_weight=6.0,
-        normal_seam_weight=4.0,
-        texture_seam_weight=0.5,
-        max_cost=2.0,
-        max_iterations=int(max_iterations),
-        use_input_mesh_uvs=(UV_hint is not None),
-        fix_winding=False,
+    # Based on to_glb logic, we call uv_unwrap.
+    # We assume uv_unwrap accepts pack_charts_kwargs (standard xatlas pattern).
+    out_vertices, out_faces, out_uvs, _ = cm.uv_unwrap(
+        compute_charts_kwargs={
+            "global_iterations": max_iterations,
+            # Defaults from to_glb or reasonable xatlas defaults:
+            "threshold_cone_half_angle_rad": np.radians(90.0),
+            "refine_iterations": 0,
+            "smooth_strength": 1,
+        },
+        pack_charts_kwargs={
+            "padding": padding,
+            "resolution": resolution,
+            "texels_per_unit": 0.0,  # 0 = use resolution/padding to pack
+            "brute_force": False,
+        },
+        return_vmaps=True,  # Required to unpack the tuple correctly even if unused
         verbose=False,
     )
 
-    # Pack charts into a square texture
-    atlas.pack_charts(
-        max_chart_size=0,  # no per-chart limit
-        padding=int(padding),
-        texels_per_unit=0.0,  # auto-estimate to match resolution
-        resolution=int(resolution),
-        bilinear=True,
-        block_align=False,
-        brute_force=False,
-        rotate_charts=rotate_charts,
-        rotate_charts_to_axis=True,
-        verbose=False,
+    # --- 4. Result Reconstruction ---
+    # Move results back to CPU
+    new_vertices = out_vertices.cpu().numpy()
+    new_faces = out_faces.cpu().numpy()
+    new_uvs = out_uvs.cpu().numpy()
+
+    # Apply the UV V-flip as seen in the to_glb reference logic
+    # (GLTF/OpenGL standard often requires V to be inverted relative to xatlas default)
+    if new_uvs.shape[0] > 0:
+        new_uvs[:, 1] = 1 - new_uvs[:, 1]
+
+    # Construct the final Trimesh
+    # Note: xatlas splits vertices at UV seams, so we must return the NEW topology.
+    unwrapped_mesh = trimesh.Trimesh(
+        vertices=new_vertices,
+        faces=new_faces,
+        visual=trimesh.visual.TextureVisuals(uv=new_uvs),
+        process=False  # Don't re-merge vertices or we lose the UV seams
     )
 
-    # Retrieve results for mesh 0
-    xrefs, faces_out, uvs_out = atlas.get_mesh(0)  # xrefs:[NewV], faces:[NewF,3], uvs:[NewV,2]
-    # to numpy
-    xrefs = xrefs.cpu().numpy().astype(np.int64, copy=False)
-    faces_out = faces_out.cpu().numpy().astype(np.int64, copy=False)
-    uvs_out = uvs_out.cpu().numpy().astype(np.float32, copy=False)
-
-    # Map original vertices -> new vertex order
-    new_vertices = V_np[xrefs]  # [NewV,3]
-    new_faces = faces_out  # [NewF,3]
-    new_uvs = uvs_out  # [NewV,2]
-
-    # Safety: clamp UVs to [0,1] (xatlas should already pack properly)
-    np.clip(new_uvs, 0.0, 1.0, out=new_uvs)
-
-    # Build a fresh trimesh
-    out = trimesh.Trimesh(vertices=new_vertices, faces=new_faces, process=False)
-    out.visual = trimesh.visual.TextureVisuals(uv=new_uvs)
-
-    # Recompute/transfer vertex normals for the new indexing
-    try:
-        # Duplicate normals to new indexing using xrefs
-        if normals_np is not None and len(normals_np) == len(V_np):
-            out._vertex_normals = normals_np[xrefs].astype(np.float32, copy=False)
-        else:
-            # fallback recompute
-            _ = out.vertex_normals  # triggers trimesh compute if needed
-    except Exception:
-        pass
-
-    return out
+    return unwrapped_mesh
 
 
 def sf_mesh_uv_wrap(mesh, island_padding=0.05, device='cuda', y_flip=False):
