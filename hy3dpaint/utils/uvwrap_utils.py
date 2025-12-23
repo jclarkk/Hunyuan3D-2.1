@@ -66,18 +66,15 @@ def cuda_xatlas_unwrap(mesh, padding=2, resolution=1024, max_iterations=4):
     # We map the function arguments to the kwargs expected by cumesh/xatlas.
     # Note: 'padding' and 'resolution' usually go into pack_charts,
     # while 'max_iterations' affects the chart generation.
-
-    # Based on to_glb logic, we call uv_unwrap.
     # We assume uv_unwrap accepts pack_charts_kwargs (standard xatlas pattern).
-    out_vertices, out_faces, out_uvs, _ = cm.uv_unwrap(
+    out_vertices, out_faces, out_uvs, out_vmaps = cm.uv_unwrap(
         compute_charts_kwargs={
-            "global_iterations": max_iterations,
-            # Defaults from to_glb or reasonable xatlas defaults:
             "threshold_cone_half_angle_rad": np.radians(90.0),
-            "refine_iterations": 0,
+            "refine_iterations": 1,
+            "global_iterations": 1,
             "smooth_strength": 1,
         },
-        pack_charts_kwargs={
+        xatlas_pack_charts_kwargs={
             "padding": padding,
             "resolution": resolution,
             "texels_per_unit": 0.0,  # 0 = use resolution/padding to pack
