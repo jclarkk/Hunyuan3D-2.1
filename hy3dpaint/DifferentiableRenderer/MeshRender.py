@@ -1555,10 +1555,8 @@ class MeshRender:
 
         print('Using LaMa texture inpainting method')
         
-        # Optimization: Downsample for inpainting if texture is too large (e.g., 8k)
-        # This significantly speeds up hole filling without noticeable quality loss in the filled regions.
         h, w = texture_np.shape[:2]
-        max_inpaint_res = 2048
+        max_inpaint_res = 4096
         
         if max(h, w) > max_inpaint_res:
             scale = max_inpaint_res / max(h, w)
@@ -1567,7 +1565,10 @@ class MeshRender:
             
             # Downsample
             texture_small = cv2.resize(texture_np, (new_w, new_h), interpolation=cv2.INTER_AREA)
-            mask_small = cv2.resize(mask_np, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+            # Use INTER_AREA for mask to capture partial coverage, then threshold aggressively to treat edges as holes
+            mask_small_float = cv2.resize(mask_np.astype(np.float32), (new_w, new_h), interpolation=cv2.INTER_AREA)
+            mask_small = (mask_small_float > 254).astype(np.uint8) * 255
             
             # Inpaint low-res
             inpainted_small = self.parallel_tiles_inpainting(texture_small, mask_small)
