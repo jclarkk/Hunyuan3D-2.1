@@ -13,49 +13,6 @@ sys.path.insert(0, './hy3dpaint')
 
 from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
 
-
-def build_model_viewer_html(glb_path: str, height: int = 480, textured=False) -> str:
-    template_name = './assets/modelviewer-template.html'
-    out_html = os.path.join('current_mesh.html')
-
-    # read template
-    with open(os.path.join(template_name), 'r', encoding='utf-8') as f:
-        html = f.read()
-
-    # IMPORTANT: use file= paths (works locally, with Runpod proxy, and with share=True)
-    # your template should reference #src# where the model URL goes
-    html = html.replace('#src#', f'file={glb_path}')
-
-    # if your template references env maps or other assets, also replace those to file=ABS_PATH
-    # e.g.: html = html.replace('#env_map#', f'file={os.path.abspath("assets/env_maps/studio.hdr")}')
-
-    with open(out_html, 'w', encoding='utf-8') as f:
-        f.write(html)
-
-    # Point iframe to the HTML file via Gradio's file server
-    return f"""
-      <div style='height:{height}px;width:100%;'>
-        <iframe src="file={out_html}" height="{height}" width="100%" frameborder="0"></iframe>
-      </div>
-    """
-
-
-def preview_uploaded_glb(glb_file):
-    if glb_file is None:
-        # File cleared
-        return gr.update(visible=False, value="")
-
-    save_folder = os.path.join(SAVE_DIR, str(uuid.uuid4()))
-    os.makedirs(save_folder, exist_ok=True)
-
-    glb_preview_path = os.path.join(save_folder, "input_preview.glb")
-    with open(glb_file.name, "rb") as src, open(glb_preview_path, "wb") as dst:
-        dst.write(src.read())
-
-    html = build_model_viewer_html(glb_preview_path)
-    return gr.update(visible=True, value=html)
-
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--host', type=str, default='0.0.0.0')
 parser.add_argument('--port', type=int, default=8080)
@@ -80,7 +37,7 @@ def run_texturing(glb_file, reference_image, uv_unwrap_method, texture_size, pbr
     os.makedirs(save_folder, exist_ok=True)
 
     # Load GLB mesh
-    mesh = trimesh.load(glb_file.name, force='mesh')
+    mesh = trimesh.load(glb_file, force='mesh')
 
     # Run texturing
     textured_mesh = tex_pipeline(
@@ -97,10 +54,7 @@ def run_texturing(glb_file, reference_image, uv_unwrap_method, texture_size, pbr
     glb_out_path = os.path.join(save_folder, "textured_mesh.glb")
     textured_mesh.export(glb_out_path)
 
-    return (
-        glb_out_path,
-        build_model_viewer_html(glb_out_path)
-    )
+    return glb_out_path
 
 
 # Gradio UI
@@ -109,13 +63,13 @@ with gr.Blocks() as demo:
     with gr.Row():
         with gr.Column(scale=1):
             with gr.Column():
-                glb_file = gr.File(label="Upload GLB", file_types=[".glb"], interactive=True)
-                input_preview = gr.HTML(label="Input Preview", visible=False)
+                input_preview = gr.Model3D(label="Input Mesh (.glb, .obj)")
                 reference_image = gr.Image(type="filepath", label="Reference Image")
 
             with gr.Column():
                 seed = gr.Number(value=-1, label="Seed (use -1 for random)", precision=0)
-                uv_unwrap_method = gr.Radio(['xatlas', 'open3d', 'bpy', 'sf', 'cuda_xatlas'], label='UV Unwrap Method', value='xatlas')
+                uv_unwrap_method = gr.Radio(['xatlas', 'open3d', 'bpy', 'sf', 'cuda_xatlas'], label='UV Unwrap Method',
+                                            value='xatlas')
                 texture_size = gr.Slider(1024, 8192, step=1024, value=4096, label="Texture Size")
                 pbr = gr.Checkbox(value=True, label="Enable PBR Texturing")
                 super_resolution = gr.Radio(["None", "NMKD", "Aura", "Flux", "Topaz", "Gemini"],
@@ -123,20 +77,14 @@ with gr.Blocks() as demo:
                 num_views = gr.Slider(6, 24, step=2, value=6, label="Number of Views")
                 submit = gr.Button("Generate Texture")
 
-        with gr.Column(scale=1):  # RIGHT COLUMN: Output
-            output_file = gr.File(label="Download Textured GLB")
-            output_preview = gr.HTML(label="Output Preview")
-
-    glb_file.change(
-        fn=preview_uploaded_glb,
-        inputs=[glb_file],
-        outputs=[input_preview]
-    )
+        with gr.Column(scale=1):
+            output_preview = gr.Model3D(label="Refined Output Mesh")
 
     submit.click(run_texturing,
-                 inputs=[glb_file, reference_image, uv_unwrap_method, texture_size, pbr, super_resolution, num_views,
+                 inputs=[input_preview, reference_image, uv_unwrap_method, texture_size, pbr, super_resolution,
+                         num_views,
                          seed],
-                 outputs=[output_file, output_preview])
+                 outputs=[output_preview])
 
 if os.getenv("USE_GRADIO_SHARE", "0") == "1":
     demo.launch(server_name="0.0.0.0", server_port=8080, share=True)

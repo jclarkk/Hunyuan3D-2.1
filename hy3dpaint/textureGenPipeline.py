@@ -20,6 +20,7 @@ import time
 import trimesh
 import numpy as np
 from PIL import Image
+import torch.nn.functional as F
 from typing import List
 from DifferentiableRenderer.MeshRender import MeshRender
 from hy3dpaint.mvadapter.pipeline import MVAdapterPipelineWrapper
@@ -412,13 +413,33 @@ class Hunyuan3DPaintPipeline:
         t0 = time.time()
         ###########  Bake  ##########
         texture_mr, mask_mr_np = None, None
-        for i in range(len(enhance_images)):
-            enhance_images["albedo"][i] = enhance_images["albedo"][i].resize(
-                (self.config.render_size, self.config.render_size)
-            )
-            if pbr:
-                enhance_images["mr"][i] = enhance_images["mr"][i].resize(
-                    (self.config.render_size, self.config.render_size))
+        # Optimization: Resize on GPU to avoid CPU bottleneck and fix loop bug
+        for key in ["albedo", "mr"]:
+            if key in enhance_images:
+                resized_tensors = []
+                for img in enhance_images[key]:
+                    # Convert PIL/Tensor to GPU Tensor (N, C, H, W)
+                    if isinstance(img, Image.Image):
+                        img_tensor = torch.from_numpy(np.array(img)).float() / 255.0
+                        img_tensor = img_tensor.permute(2, 0, 1).unsqueeze(0).to(self.config.device)
+                    elif isinstance(img, torch.Tensor):
+                        img_tensor = img.to(self.config.device)
+                        if img_tensor.dim() == 3:
+                            img_tensor = img_tensor.permute(2, 0, 1).unsqueeze(0) if img_tensor.shape[-1] == 3 else img_tensor.unsqueeze(0)
+                        elif img_tensor.dim() == 4 and img_tensor.shape[-1] == 3:
+                             img_tensor = img_tensor.permute(0, 3, 1, 2)
+                    
+                    if img_tensor.shape[2:] != (self.config.render_size, self.config.render_size):
+                       img_tensor = torch.nn.functional.interpolate(
+                           img_tensor, 
+                           size=(self.config.render_size, self.config.render_size), 
+                           mode='bilinear', 
+                           align_corners=False
+                       )
+                    
+                    # Convert to (H, W, C) for back_project
+                    resized_tensors.append(img_tensor.squeeze(0).permute(1, 2, 0))
+                enhance_images[key] = resized_tensors
         texture, mask = self.view_processor.bake_from_multiview(
             enhance_images["albedo"], selected_camera_elevs, selected_camera_azims, selected_view_weights
         )

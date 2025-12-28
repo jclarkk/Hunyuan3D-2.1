@@ -1,8 +1,11 @@
-import shutil
+import atexit
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import os
 import requests
+import shutil
+import threading
 import torch
 from PIL import Image
 from io import BytesIO
@@ -120,52 +123,88 @@ class TopazAPIUpscalerPipeline:
     High quality upscaling using Topaz synchronous API.
     """
 
-    def __init__(self, texture_size: int = 4096):
-        self.topaz_api_key = os.getenv('TOPAZ_API_KEY')
-        self.topaz_url = 'https://api.topazlabs.com/image/v1/enhance'
+    def __init__(self, texture_size: int = 4096, concurrency: int = 3):
+        self.topaz_api_key = os.getenv("TOPAZ_API_KEY")
+        self.topaz_url = "https://api.topazlabs.com/image/v1/enhance"
         self.output_height = texture_size
         self.output_width = texture_size
-        self.model = 'Standard V2'
-        self.output_format = 'png'
+        self.model = "Standard V2"
+        self.output_format = "png"
         self.max_retries = 5
         self.backoff_base = 2
 
+        # Internal concurrency control (max 3 in-flight requests)
+        self._executor = ThreadPoolExecutor(max_workers=concurrency)
+        self._sem = threading.Semaphore(concurrency)
+
+        # Optional: reuse connections
+        self._session = requests.Session()
+
+        atexit.register(self._shutdown)
+
+    def _shutdown(self):
+        # Safe shutdown at process exit
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            # cancel_futures not available on older python versions
+            self._executor.shutdown(wait=False)
+
     def __call__(self, input_image: Image.Image) -> Image.Image:
-        image_bytes = BytesIO()
-        input_image.save(image_bytes, format='PNG')
-        image_bytes.seek(0)
+        # Submit work to internal pool and block for result
+        fut = self._executor.submit(self._process_one, input_image)
+        return fut.result()
 
-        headers = {
-            'X-API-Key': self.topaz_api_key,
-            'accept': f'image/{self.output_format}',
-        }
+    def _process_one(self, input_image: Image.Image) -> Image.Image:
+        if not self.topaz_api_key:
+            raise RuntimeError("TOPAZ_API_KEY is not set")
 
-        files = {
-            'image': ('input.png', image_bytes, 'image/png')
-        }
+        # Limit number of concurrent HTTP requests
+        with self._sem:
+            raw = BytesIO()
+            input_image.save(raw, format="PNG")
+            payload = raw.getvalue()
 
-        data = {
-            'model': self.model,
-            'output_height': self.output_height,
-            'output_width': self.output_width,
-            'output_format': self.output_format
-        }
+            headers = {
+                "X-API-Key": self.topaz_api_key,
+                "accept": f"image/{self.output_format}",
+            }
 
-        for attempt in range(self.max_retries):
-            response = requests.post(self.topaz_url, headers=headers, files=files, data=data)
+            data = {
+                "model": self.model,
+                "output_height": self.output_height,
+                "output_width": self.output_width,
+                "output_format": self.output_format,
+            }
 
-            if response.status_code == 200:
-                return Image.open(BytesIO(response.content))
+            last_exc = None
+            for attempt in range(self.max_retries):
+                try:
+                    files = {"image": ("input.png", BytesIO(payload), "image/png")}
+                    response = self._session.post(
+                        self.topaz_url,
+                        headers=headers,
+                        files=files,
+                        data=data,
+                        timeout=(10, 300),
+                    )
 
-            elif response.status_code in [429, 500, 502, 503, 504]:
-                sleep_time = self.backoff_base ** attempt
-                time.sleep(sleep_time)
-                continue
+                    if response.status_code == 200:
+                        img = Image.open(BytesIO(response.content))
+                        img.load()
+                        return img
 
-            else:
-                response.raise_for_status()
+                    if response.status_code in (429, 500, 502, 503, 504):
+                        time.sleep(self.backoff_base ** attempt)
+                        continue
 
-        raise Exception("Topaz sync upscaling failed after retries.")
+                    response.raise_for_status()
+
+                except Exception as e:
+                    last_exc = e
+                    time.sleep(self.backoff_base ** attempt)
+
+            raise RuntimeError("Topaz sync upscaling failed after retries.") from last_exc
 
 
 class GeminiAPIPipeline:
