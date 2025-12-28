@@ -1554,7 +1554,37 @@ class MeshRender:
             mask_np = mask
 
         print('Using LaMa texture inpainting method')
-        texture_np = self.parallel_tiles_inpainting(texture_np, mask_np)
+        
+        # Optimization: Downsample for inpainting if texture is too large (e.g., 8k)
+        # This significantly speeds up hole filling without noticeable quality loss in the filled regions.
+        h, w = texture_np.shape[:2]
+        max_inpaint_res = 2048
+        
+        if max(h, w) > max_inpaint_res:
+            scale = max_inpaint_res / max(h, w)
+            new_h, new_w = int(h * scale), int(w * scale)
+            print(f"Large texture detected ({w}x{h}). Downsampling to {new_w}x{new_h} for fast inpainting...")
+            
+            # Downsample
+            texture_small = cv2.resize(texture_np, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            mask_small = cv2.resize(mask_np, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            
+            # Inpaint low-res
+            inpainted_small = self.parallel_tiles_inpainting(texture_small, mask_small)
+            
+            # Upscale back
+            inpainted_upscaled = cv2.resize(inpainted_small, (w, h), interpolation=cv2.INTER_LINEAR)
+            
+            # Composite: Keep original pixels where mask is valid (255), fill holes (0) with upscaled result
+            # mask_np is uint8 (0 or 255). normalized mask: 1.0 where valid, 0.0 where hole
+            alpha = mask_np.astype(np.float32) / 255.0
+            if texture_np.ndim == 3:
+                alpha = alpha[..., None]
+            
+            texture_np = texture_np * alpha + inpainted_upscaled * (1.0 - alpha)
+            
+        else:
+            texture_np = self.parallel_tiles_inpainting(texture_np, mask_np)
 
         if return_float:
             return texture_np.astype(np.float32)
