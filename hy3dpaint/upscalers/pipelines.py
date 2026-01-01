@@ -54,6 +54,13 @@ class FluxUpscalerPipeline:
         ).images[0]
 
 
+import torch
+import torch.nn.functional as F
+from torchvision import transforms
+from PIL import Image
+from spandrel import ModelLoader
+
+
 class NMKDSiaxUpscalerPipeline:
     """
         High quality upscaling with good performance using NMKD
@@ -71,34 +78,80 @@ class NMKDSiaxUpscalerPipeline:
         self.model = model
         self.device = device
         self.texture_size = texture_size
+        self.to_tensor = transforms.ToTensor()
+        self.to_pil = transforms.ToPILImage()
 
-    def upscale_once(self, image: Image.Image) -> Image.Image:
-        from torchvision import transforms
-        to_pil = transforms.ToPILImage()
-        to_tensor = transforms.ToTensor()
+    def upscale_tensor(self, tensor: torch.Tensor, use_tiling: bool = False) -> torch.Tensor:
+        """
+        Runs inference on a GPU tensor.
+        Returns a GPU tensor (no CPU transfer).
+        """
+        if use_tiling:
+            return self.tiled_inference(tensor)
 
-        input_tensor = to_tensor(image).unsqueeze(0).to(self.device).half()
         with torch.no_grad():
-            output = self.model(input_tensor).float().clamp(0, 1).squeeze(0).cpu()
-        return to_pil(output)
+            return self.model(tensor)
+
+    def tiled_inference(self, tensor: torch.Tensor, tile_size=1024, overlap=32) -> torch.Tensor:
+        """
+        Splits large tensor into tiles, upscales them, and stitches them back.
+        Crucial for 2nd pass (2048 -> 8192) to keep GPU compute efficient.
+        """
+        b, c, h, w = tensor.shape
+        # Calculate target size (model is 4x)
+        scale = 4
+        out_h, out_w = h * scale, w * scale
+        output = torch.zeros((b, c, out_h, out_w), device=self.device, dtype=tensor.dtype)
+
+        # Simple sliding window tiling
+        for i in range(0, h, tile_size - overlap):
+            for j in range(0, w, tile_size - overlap):
+                # Crop input
+                h_end = min(i + tile_size, h)
+                w_end = min(j + tile_size, w)
+                h_start = max(0, h_end - tile_size)
+                w_start = max(0, w_end - tile_size)
+
+                tile = tensor[:, :, h_start:h_end, w_start:w_end]
+
+                # Inference
+                with torch.no_grad():
+                    out_tile = self.model(tile)
+
+                out_y_start = h_start * scale
+                out_x_start = w_start * scale
+                out_y_end = h_end * scale
+                out_x_end = w_end * scale
+
+                output[:, :, out_y_start:out_y_end, out_x_start:out_x_end] = out_tile
+
+        return output
 
     def __call__(self, input_image: Image.Image) -> Image.Image:
-        # --- Single or double pass upscaling ---
+        # Move to GPU immediately
+        img_tensor = self.to_tensor(input_image).unsqueeze(0).to(self.device).half()
+
+        # --- Pipeline Logic ---
         if self.texture_size in (6144, 8192):
-            # 1st upscale → 4096
-            img = self.upscale_once(input_image)
-            # Resize to 2048 for 2nd pass
-            img = img.resize((2048, 2048), Image.LANCZOS)
-            # 2nd upscale → ~8192, then resize down if needed
-            img = self.upscale_once(img)
+            # Pass 1: 1024 -> 4096 (Fast, no tiling needed usually)
+            img_tensor = self.upscale_tensor(img_tensor, use_tiling=False)
+            # Downscale 4096 -> 2048
+            img_tensor = F.interpolate(img_tensor, size=(2048, 2048), mode='bicubic', antialias=True)
+            # Pass 2: 2048 -> 8192
+            img_tensor = self.upscale_tensor(img_tensor, use_tiling=True)
         else:
-            img = self.upscale_once(input_image)
+            img_tensor = self.upscale_tensor(img_tensor)
 
-        # --- Final resize to exact target size ---
-        if img.size[0] != self.texture_size:
-            img = img.resize((self.texture_size, self.texture_size), Image.LANCZOS)
+        if img_tensor.shape[-1] != self.texture_size:
+            img_tensor = F.interpolate(
+                img_tensor,
+                size=(self.texture_size, self.texture_size),
+                mode='bicubic',
+                antialias=True
+            )
 
-        return img
+        output = img_tensor.float().clamp(0, 1).squeeze(0).cpu()
+        return self.to_pil(output)
 
 
 class AuraSRUpscalerPipeline:
