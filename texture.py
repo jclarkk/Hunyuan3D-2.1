@@ -97,7 +97,7 @@ def run(args):
 
     print(f"Texture generation took {t7 - t6:.2f} seconds")
 
-    # mesh = normalize_mesh(mesh)
+    mesh = normalize_mesh(mesh)
 
     mesh.export(os.path.join(args.output_dir, '{}.glb'.format(output_name)))
 
