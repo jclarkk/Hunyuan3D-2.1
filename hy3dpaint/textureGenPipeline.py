@@ -460,8 +460,12 @@ class Hunyuan3DPaintPipeline:
             texture_mr = self.view_processor.texture_inpaint(texture_mr, mask_mr_np)
             self.render.set_texture_mr(texture_mr)
 
-        mesh = self.render.get_trimesh()
         t1 = time.time()
-        print('Inpainting and saving mesh took {:.2f} seconds'.format(t1 - t0))
+        print('Inpainting took {:.2f} seconds'.format(t1 - t0))
+
+        mesh = self.render.get_trimesh()
+        t2 = time.time()
+
+        print(f"Building trimesh object took {t2 - t1:.2f} seconds")
 
         return mesh

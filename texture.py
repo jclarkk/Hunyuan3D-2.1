@@ -101,9 +101,13 @@ def run(args):
 
     mesh.export(os.path.join(args.output_dir, '{}.glb'.format(output_name)))
 
+    t8 = time.time()
+
+    print(f"Mesh export took {t8 - t7:.2f} seconds")
+
     print(f"Output saved to {args.output_dir}/{output_name}.glb")
 
-    print(f"Total time taken: {t7 - t0:.2f} seconds")
+    print(f"Total time taken: {t8 - t0:.2f} seconds")
 
 
 if __name__ == "__main__":
