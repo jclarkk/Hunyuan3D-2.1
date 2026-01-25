@@ -41,70 +41,75 @@ def cuda_xatlas_unwrap(mesh, padding=2, resolution=1024, max_iterations=4):
             "cumesh not found. Install CuMesh (e.g., `pip install CuMesh/ --no-build-isolation`)."
         ) from e
 
-    # --- 1. Data Preparation ---
-    # Handle Scene vs Trimesh
-    if isinstance(mesh, trimesh.Scene):
-        # Concatenate scene into a single mesh for unwrapping
-        mesh = trimesh.util.concatenate(
-            tuple(trimesh.Trimesh(vertices=g.vertices, faces=g.faces)
-                  for g in mesh.geometry.values())
+    try:
+        # --- 1. Data Preparation ---
+        # Handle Scene vs Trimesh
+        if isinstance(mesh, trimesh.Scene):
+            # Concatenate scene into a single mesh for unwrapping
+            mesh = trimesh.util.concatenate(
+                tuple(trimesh.Trimesh(vertices=g.vertices, faces=g.faces)
+                      for g in mesh.geometry.values())
+            )
+
+        # Ensure mesh is a Trimesh object
+        if not isinstance(mesh, trimesh.Trimesh):
+            raise ValueError(f"Input must be trimesh.Trimesh or trimesh.Scene, got {type(mesh)}")
+
+        vertices = torch.from_numpy(mesh.vertices).float().cuda()
+        faces = torch.from_numpy(mesh.faces).int().cuda()
+
+        # --- 2. CuMesh Initialization ---
+        # The reference logic initializes CuMesh with the vertices/faces
+        cm = cumesh.CuMesh()
+        cm.init(vertices, faces)
+
+        # --- 3. UV Unwrapping ---
+        # We map the function arguments to the kwargs expected by cumesh/xatlas.
+        # Note: 'padding' and 'resolution' usually go into pack_charts,
+        # while 'max_iterations' affects the chart generation.
+        # We assume uv_unwrap accepts pack_charts_kwargs (standard xatlas pattern).
+        out_vertices, out_faces, out_uvs, out_vmaps = cm.uv_unwrap(
+            compute_charts_kwargs={
+                "threshold_cone_half_angle_rad": np.radians(90.0),
+                "refine_iterations": 1,
+                "global_iterations": 1,
+                "smooth_strength": 1,
+            },
+            xatlas_pack_charts_kwargs={
+                "padding": padding,
+                "resolution": resolution,
+                "texels_per_unit": 0.0,  # 0 = use resolution/padding to pack
+                "brute_force": False,
+            },
+            return_vmaps=True,  # Required to unpack the tuple correctly even if unused
+            verbose=False,
         )
 
-    # Ensure mesh is a Trimesh object
-    if not isinstance(mesh, trimesh.Trimesh):
-        raise ValueError(f"Input must be trimesh.Trimesh or trimesh.Scene, got {type(mesh)}")
+        # --- 4. Result Reconstruction ---
+        # Move results back to CPU
+        new_vertices = out_vertices.cpu().numpy()
+        new_faces = out_faces.cpu().numpy()
+        new_uvs = out_uvs.cpu().numpy()
 
-    vertices = torch.from_numpy(mesh.vertices).float().cuda()
-    faces = torch.from_numpy(mesh.faces).int().cuda()
+        # Apply the UV V-flip as seen in the to_glb reference logic
+        # (GLTF/OpenGL standard often requires V to be inverted relative to xatlas default)
+        if new_uvs.shape[0] > 0:
+            new_uvs[:, 1] = 1 - new_uvs[:, 1]
 
-    # --- 2. CuMesh Initialization ---
-    # The reference logic initializes CuMesh with the vertices/faces
-    cm = cumesh.CuMesh()
-    cm.init(vertices, faces)
+        # Construct the final Trimesh
+        # Note: xatlas splits vertices at UV seams, so we must return the NEW topology.
+        unwrapped_mesh = trimesh.Trimesh(
+            vertices=new_vertices,
+            faces=new_faces,
+            visual=trimesh.visual.TextureVisuals(uv=new_uvs),
+            process=False  # Don't re-merge vertices or we lose the UV seams
+        )
 
-    # --- 3. UV Unwrapping ---
-    # We map the function arguments to the kwargs expected by cumesh/xatlas.
-    # Note: 'padding' and 'resolution' usually go into pack_charts,
-    # while 'max_iterations' affects the chart generation.
-    # We assume uv_unwrap accepts pack_charts_kwargs (standard xatlas pattern).
-    out_vertices, out_faces, out_uvs, out_vmaps = cm.uv_unwrap(
-        compute_charts_kwargs={
-            "threshold_cone_half_angle_rad": np.radians(90.0),
-            "refine_iterations": 1,
-            "global_iterations": 1,
-            "smooth_strength": 1,
-        },
-        xatlas_pack_charts_kwargs={
-            "padding": padding,
-            "resolution": resolution,
-            "texels_per_unit": 0.0,  # 0 = use resolution/padding to pack
-            "brute_force": False,
-        },
-        return_vmaps=True,  # Required to unpack the tuple correctly even if unused
-        verbose=False,
-    )
-
-    # --- 4. Result Reconstruction ---
-    # Move results back to CPU
-    new_vertices = out_vertices.cpu().numpy()
-    new_faces = out_faces.cpu().numpy()
-    new_uvs = out_uvs.cpu().numpy()
-
-    # Apply the UV V-flip as seen in the to_glb reference logic
-    # (GLTF/OpenGL standard often requires V to be inverted relative to xatlas default)
-    if new_uvs.shape[0] > 0:
-        new_uvs[:, 1] = 1 - new_uvs[:, 1]
-
-    # Construct the final Trimesh
-    # Note: xatlas splits vertices at UV seams, so we must return the NEW topology.
-    unwrapped_mesh = trimesh.Trimesh(
-        vertices=new_vertices,
-        faces=new_faces,
-        visual=trimesh.visual.TextureVisuals(uv=new_uvs),
-        process=False  # Don't re-merge vertices or we lose the UV seams
-    )
-
-    return unwrapped_mesh
+        return unwrapped_mesh
+    except Exception as e:
+        # Fallback to open3d
+        print('CuMesh xatlas unwrap failed, falling back to open3d. Error: ', e)
+        return open3d_mesh_uv_wrap(mesh, resolution=resolution, use_fallback=False)
 
 
 def sf_mesh_uv_wrap(mesh, island_padding=0.05, device='cuda', y_flip=False):

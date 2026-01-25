@@ -37,6 +37,14 @@ def run(args):
     # Reduce face count
     face_limit = 550000
     if len(mesh.faces) > face_limit:
+        # Try reducing first
+        try:
+            from hy3dshape.hy3dshape.postprocessors import reduce_face_with_meshlib
+            mesh = reduce_face_with_meshlib(mesh, 500000)
+            if len(mesh.faces) > face_limit:
+                raise ValueError(f"Reduction failed - Face count must be less than or equal to {face_limit}")
+        except Exception as e:
+            print(f"Mesh reduction with meshlib failed: {e}.")
         raise ValueError(f"Face count must be less than or equal to {face_limit}")
 
     t1 = time.time()
